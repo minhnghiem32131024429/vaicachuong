@@ -575,6 +575,48 @@ class ScaraGUI:
             if self.serial and self.serial.is_open:
                 self.serial.close()
 
+    def convert_simulation_to_real_angle(self, sim_angle):
+        """Chuyển đổi từ góc trong mô phỏng sang góc thực tế
+        - Mô phỏng: 0° là hướng âm trục X, góc tăng ngược chiều kim đồng hồ
+        - Thực tế: 0° là hướng dương trục X, góc tăng theo chiều kim đồng hồ
+        """
+        # Xoay 180° và đảo chiều
+        real_angle = (-sim_angle + 180) % 360
+
+        return real_angle
+
+    def send_move_command(self, theta1, theta2):
+        """Gửi lệnh di chuyển đến Arduino với quy ước góc đã chỉnh sửa"""
+        if not self.is_connected:
+            self.log("Chưa kết nối!")
+            return False
+
+        try:
+            # Chuyển đổi góc từ mô phỏng sang góc thực tế
+            # Đảo vị trí theta1/theta2 vì góc 1 điều khiển động cơ Y, góc 2 điều khiển động cơ X
+            real_theta1 = self.convert_simulation_to_real_angle(theta2)  # theta2 (mô phỏng) -> góc motor X (thực tế)
+            real_theta2 = self.convert_simulation_to_real_angle(theta1)  # theta1 (mô phỏng) -> góc motor Y (thực tế)
+
+            # Đảm bảo động cơ không quay vào vùng dưới trục X (nửa dưới)
+            if real_theta1 > 180 and real_theta1 < 360:
+                self.log(f"❌ Góc motor X ({real_theta1:.2f}°) nằm trong vùng cấm (>180° và <360°)")
+                messagebox.showerror("Lỗi", "Góc motor X nằm trong vùng không cho phép!")
+                return False
+
+            if real_theta2 > 180 and real_theta2 < 360:
+                self.log(f"❌ Góc motor Y ({real_theta2:.2f}°) nằm trong vùng cấm (>180° và <360°)")
+                messagebox.showerror("Lỗi", "Góc motor Y nằm trong vùng không cho phép!")
+                return False
+
+            # Gửi lệnh với góc đã điều chỉnh và hoán đổi vị trí
+            command = f"{real_theta2:.2f},{real_theta1:.2f}"
+            self.log(f"Gửi lệnh: {command} (Từ góc mô phỏng: θ1={theta1:.2f}, θ2={theta2:.2f})")
+            self.send_command(command)
+            return True
+        except Exception as e:
+            self.log(f"❌ Lỗi gửi lệnh: {str(e)}")
+            return False
+
     def send_command(self, command, wait_for_response=True):
         """Gửi lệnh đến Arduino - phiên bản không chặn UI"""
         if not self.is_connected or not self.serial or not self.serial.is_open:
@@ -649,6 +691,24 @@ class ScaraGUI:
         self.pen_is_down = is_down
         self.pen_label.configure(text="Hạ" if is_down else "Nâng")
 
+    def move_to_angle(self):
+        """Di chuyển đến góc"""
+        if not self.is_connected:
+            messagebox.showwarning("Cảnh báo", "Vui lòng kết nối với Arduino!")
+            return
+
+        try:
+            theta1 = float(self.angle1_entry.get())
+            theta2 = float(self.angle2_entry.get())
+
+            # Sử dụng phương thức mới để gửi lệnh
+            if self.send_move_command(theta1, theta2):
+                # Cập nhật vị trí (vẫn giữ góc gốc cho mô phỏng)
+                self.update_position(theta1, theta2)
+
+        except ValueError:
+            messagebox.showerror("Lỗi", "Giá trị góc không hợp lệ!")
+
     def move_to_xy(self):
         """Di chuyển đến tọa độ XY"""
         if not self.is_connected:
@@ -676,30 +736,14 @@ class ScaraGUI:
             self.angle2_entry.delete(0, tk.END)
             self.angle2_entry.insert(0, f"{theta2:.2f}")
 
-            # Di chuyển
-            self.send_command(f"{theta1:.2f},{theta2:.2f}")
+            # Sử dụng phương thức mới để gửi lệnh
+            if self.send_move_command(theta1, theta2):
+                # Cập nhật mô phỏng với góc gốc
+                self.current_position = {'x': x, 'y': y}
+                self.update_position(theta1, theta2)
 
         except ValueError:
             messagebox.showerror("Lỗi", "Giá trị tọa độ không hợp lệ!")
-
-    def move_to_angle(self):
-        """Di chuyển đến góc"""
-        if not self.is_connected:
-            messagebox.showwarning("Cảnh báo", "Vui lòng kết nối với Arduino!")
-            return
-
-        try:
-            theta1 = float(self.angle1_entry.get())
-            theta2 = float(self.angle2_entry.get())
-
-            # Di chuyển
-            self.send_command(f"{theta1:.2f},{theta2:.2f}")
-
-            # Cập nhật vị trí
-            self.update_position(theta1, theta2)
-
-        except ValueError:
-            messagebox.showerror("Lỗi", "Giá trị góc không hợp lệ!")
 
     def update_position(self, theta1, theta2):
         """Cập nhật vị trí khi góc thay đổi"""

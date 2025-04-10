@@ -120,17 +120,73 @@ void disableMotors() {
   Serial.println(F("MOTORS_DISABLED"));
 }
 
-// --- Hàm điều khiển bút ---
-void penUp() {
-  penServo.write(PEN_UP_ANGLE);
-  isPenDown = false;
-  Serial.println(F("PEN_UP"));
+// --- Hàm điều khiển bút cải tiến ---
+// Thay thế hàm penDown() bằng phiên bản di chuyển nhẹ nhàng hơn
+void penDown() {
+  // In debug nhưng không làm gián đoạn kết nối
+  Serial.println(F("Starting pen down..."));
+  
+  // QUAN TRỌNG: Tắt động cơ bước trước khi điều khiển servo
+  digitalWrite(ENABLE_PIN, HIGH);  // Tắt stepper motors để tiết kiệm điện
+  delay(50);  // Đợi 50ms để mạch ổn định
+  
+  // Di chuyển servo từ từ với bước nhỏ
+  int currentPos = penServo.read();
+  
+  // Nếu đang ở trên vị trí cần hạ xuống
+  if (currentPos > PEN_DOWN_ANGLE) {
+    // Di chuyển từ từ xuống vị trí pen down
+    for (int angle = currentPos; angle > PEN_DOWN_ANGLE; angle -= 2) {
+      penServo.write(angle);
+      delay(20);  // Đợi 20ms giữa các bước - quan trọng
+    }
+  }
+  
+  // Đặt vị trí cuối cùng
+  penServo.write(PEN_DOWN_ANGLE);
+  delay(100);  // Đợi servo ổn định
+  
+  isPenDown = true;
+  
+  // Chỉ gửi phản hồi sau khi servo đã ổn định
+  Serial.println(F("PEN_DOWN"));
+  
+  // Kích hoạt lại động cơ bước
+  delay(100);  // Đợi thêm để đảm bảo servo đã ổn định
+  digitalWrite(ENABLE_PIN, LOW);  // Kích hoạt lại stepper motors
+  
+  // Gửi OK CUỐI CÙNG
+  Serial.println(F("OK"));
 }
 
-void penDown() {
-  penServo.write(PEN_DOWN_ANGLE);
-  isPenDown = true;
-  Serial.println(F("PEN_DOWN"));
+// Tương tự sửa cả hàm penUp()
+void penUp() {
+  Serial.println(F("Starting pen up..."));
+  
+  // Tắt động cơ bước
+  digitalWrite(ENABLE_PIN, HIGH);
+  delay(50);
+  
+  int currentPos = penServo.read();
+  
+  if (currentPos < PEN_UP_ANGLE) {
+    for (int angle = currentPos; angle < PEN_UP_ANGLE; angle += 2) {
+      penServo.write(angle);
+      delay(20);
+    }
+  }
+  
+  penServo.write(PEN_UP_ANGLE);
+  delay(100);
+  
+  isPenDown = false;
+  Serial.println(F("PEN_UP"));
+  
+  // Kích hoạt lại động cơ
+  delay(100);
+  digitalWrite(ENABLE_PIN, LOW);
+  
+  Serial.println(F("OK"));
 }
 
 // --- Chức năng hiệu chuẩn ---
@@ -262,9 +318,11 @@ void loop() {
 void processCommand(const char* buffer) {
   // Xử lý lệnh gốc từ Python
   if (strcmp(buffer, "status") == 0) {
-    Serial.println(commandCompleted ? F("READY") : F("BUSY"));
+    // QUAN TRỌNG: Gửi chuỗi "OK" để Python nhận biết kết nối thành công
+    Serial.println(F("OK"));
     
-    // In thêm thông tin debug
+    // Sau đó mới in thông tin debug
+    Serial.println(commandCompleted ? F("READY") : F("BUSY"));
     Serial.print(F("DEBUG: X pos:"));
     Serial.print(stepperX.currentPosition());
     Serial.print(F(" Y pos:"));
