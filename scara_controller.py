@@ -7,7 +7,7 @@ import time
 import numpy as np
 import re
 import os
-
+import queue
 
 class ScaraRobot:
     def __init__(self):
@@ -18,36 +18,41 @@ class ScaraRobot:
             'x5': -20.0,  # Tọa độ X motor 2 (motor X) - cách motor Y 20cm
             'y5': 0.0,  # Tọa độ Y motor 2
             'L1': 15.0,  # Chiều dài cánh tay 1 từ motor 1
-            'L2': 12.0,  # Chiều dài cánh tay 2 từ joint 1 đến đầu vẽ
-            'L3': 12.0,  # Chiều dài cánh tay 3 từ đầu vẽ đến joint 2
+            'L2': 25.0,  # Chiều dài cánh tay 2 từ joint 1 đến đầu vẽ
+            'L3': 25.0,  # Chiều dài cánh tay 3 từ đầu vẽ đến joint 2
             'L4': 15.0,  # Chiều dài cánh tay 4 từ joint 2 đến motor 2
         }
         self.home_position = {'x': -10.0, 'y': 38.0}  # Vị trí home
         self.calculate_workspace()
 
     def calculate_workspace(self):
-        """Tính vùng làm việc robot"""
+        """Tính vùng làm việc robot chính xác hơn"""
         # Thông số
         x1, y1 = self.robot_params['x1'], self.robot_params['y1']
         x5, y5 = self.robot_params['x5'], self.robot_params['y5']
         L1 = self.robot_params['L1']
+        L2 = self.robot_params['L2']
+        L3 = self.robot_params['L3']
         L4 = self.robot_params['L4']
-        L_mid = self.robot_params['L2'] + self.robot_params['L3']
 
-        # Vùng làm việc (hình chữ nhật bảo thủ)
-        margin = 2.0  # Biên an toàn 2cm
-        r1_min = max(0, L1 - L_mid) + margin
-        r1_max = L1 + L_mid - margin
-        r2_min = max(0, L4 - L_mid) + margin
-        r2_max = L4 + L_mid - margin
+        # Tính bán kính vùng làm việc từ mỗi động cơ
+        r1_min = max(0, abs(L1 - L2)) + 0.5  # Bán kính tối thiểu từ motor 1
+        r1_max = (L1 + L2) - 0.5  # Bán kính tối đa từ motor 1
 
-        # Giới hạn vùng làm việc
+        r2_min = max(0, abs(L4 - L3)) + 0.5  # Bán kính tối thiểu từ motor 2
+        r2_max = (L4 + L3) - 0.5  # Bán kính tối đa từ motor 2
+
+        # Tính hình chữ nhật bao quanh khu vực làm việc
         self.workspace_bounds = {
-            'left': x5 + r2_min,
-            'right': x1 + r1_max * 0.75,
-            'bottom': y1 + r1_min,
-            'top': max(y1, y5) + max(r1_max, r2_max) * 0.9
+            'left': min(x1 - r1_max, x5 - r2_max),
+            'right': max(x1 + r1_max, x5 + r2_max),
+            'bottom': min(y1 - r1_max, y5 - r2_max),
+            'top': max(y1 + r1_max, y5 + r2_max)
         }
+
+        # Lưu bán kính cho kiểm tra chi tiết
+        self.r1_min, self.r1_max = r1_min, r1_max
+        self.r2_min, self.r2_max = r2_min, r2_max
 
     def forward_kinematics(self, theta1, theta2):
         """Tính toán vị trí các khớp dựa trên góc quay"""
@@ -91,10 +96,10 @@ class ScaraRobot:
         L3 = self.robot_params['L3']
         L4 = self.robot_params['L4']
 
-        # Giới hạn góc
-        THETA1_MIN, THETA1_MAX = -90, 135
-        THETA2_MIN, THETA2_MAX = 45, 270
-        THETA_DIFF_MAX = 95
+        # Giới hạn góc - mở rộng giới hạn
+        THETA1_MIN, THETA1_MAX = -120, 150  # Mở rộng giới hạn góc động cơ 1
+        THETA2_MIN, THETA2_MAX = 30, 300  # Mở rộng giới hạn góc động cơ 2
+        THETA_DIFF_MAX = 110  # Nới lỏng giới hạn chênh lệch góc
 
         # Tính khoảng cách từ điểm vẽ đến motor
         L13 = np.sqrt((x3 - x1) ** 2 + (y3 - y1) ** 2)
@@ -130,18 +135,29 @@ class ScaraRobot:
         return theta1, theta2
 
     def check_point_in_workspace(self, x, y):
-        """Kiểm tra xem điểm có nằm trong vùng làm việc không"""
-        bounds = self.workspace_bounds
+        """Kiểm tra nhanh xem điểm có nằm trong vùng làm việc không"""
+        # Thông số
+        x1, y1 = self.robot_params['x1'], self.robot_params['y1']
+        x5, y5 = self.robot_params['x5'], self.robot_params['y5']
 
-        # Kiểm tra theo hình chữ nhật
-        if (bounds['left'] <= x <= bounds['right'] and
-                bounds['bottom'] <= y <= bounds['top']):
-            # Kiểm tra với động học ngược
+        # Kiểm tra khoảng cách đến động cơ - tính toán nhanh
+        d1_sq = (x - x1) ** 2 + (y - y1) ** 2  # Bình phương khoảng cách đến motor 1
+        d2_sq = (x - x5) ** 2 + (y - y5) ** 2  # Bình phương khoảng cách đến motor 2
+
+        # Kiểm tra điều kiện bán kính - tránh tính căn bậc 2
+        r1_min_sq = self.r1_min ** 2
+        r1_max_sq = self.r1_max ** 2
+        r2_min_sq = self.r2_min ** 2
+        r2_max_sq = self.r2_max ** 2
+
+        # Kiểm tra điều kiện bán kính
+        if (r1_min_sq <= d1_sq <= r1_max_sq and
+                r2_min_sq <= d2_sq <= r2_max_sq):
+            # Chỉ tính động học ngược nếu cần
             theta1, theta2 = self.inverse_kinematics(x, y)
             return theta1 is not None and theta2 is not None
 
         return False
-
 
 class ScaraGUI:
     def __init__(self, root):
@@ -156,6 +172,15 @@ class ScaraGUI:
         self.current_angles = {'theta1': 0.0, 'theta2': 0.0}
         self.current_position = {'x': 0.0, 'y': 0.0}
         self.pen_is_down = False
+
+        # Biến cho G-code
+        self.gcode_lines = []
+        self.gcode_running = False
+        self.gcode_paused = False
+        self.gcode_thread = None
+        self.gcode_line_num = 0
+        self.gcode_total_lines = 0
+        self.gcode_queue = queue.Queue()
 
         # Tạo giao diện
         self.create_widgets()
@@ -202,6 +227,59 @@ class ScaraGUI:
         # Panel điều khiển thủ công
         manual_frame = ttk.LabelFrame(control_frame, text="Điều khiển thủ công", padding=5)
         manual_frame.pack(fill=tk.X, pady=5)
+
+        # Thêm sau Panel điều khiển thủ công:
+        # Panel GCode
+        gcode_frame = ttk.LabelFrame(control_frame, text="Điều khiển G-Code", padding=5)
+        gcode_frame.pack(fill=tk.X, pady=5)
+
+        # Nút tải file G-code
+        load_frame = ttk.Frame(gcode_frame)
+        load_frame.pack(fill=tk.X, pady=5)
+
+        load_btn = ttk.Button(load_frame, text="Tải file G-Code", command=self.load_gcode)
+        load_btn.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+
+        # Hiển thị tên file
+        self.file_label = ttk.Label(load_frame, text="Chưa tải file")
+        self.file_label.pack(side=tk.RIGHT, padx=5)
+
+        # Khung hiển thị G-code
+        code_frame = ttk.Frame(gcode_frame)
+        code_frame.pack(fill=tk.BOTH, expand=True, pady=5)
+
+        self.gcode_text = tk.Text(code_frame, height=6, wrap=tk.NONE)
+        self.gcode_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        gcode_yscroll = ttk.Scrollbar(code_frame, command=self.gcode_text.yview)
+        gcode_yscroll.pack(side=tk.RIGHT, fill=tk.Y)
+        self.gcode_text.config(yscrollcommand=gcode_yscroll.set)
+
+        gcode_xscroll = ttk.Scrollbar(gcode_frame, orient=tk.HORIZONTAL, command=self.gcode_text.xview)
+        gcode_xscroll.pack(fill=tk.X)
+        self.gcode_text.config(xscrollcommand=gcode_xscroll.set)
+
+        # Nút điều khiển
+        ctrl_frame = ttk.Frame(gcode_frame)
+        ctrl_frame.pack(fill=tk.X, pady=5)
+
+        self.run_btn = ttk.Button(ctrl_frame, text="Chạy G-Code", command=self.run_gcode, state=tk.DISABLED)
+        self.run_btn.grid(row=0, column=0, padx=5, pady=5)
+
+        self.pause_btn = ttk.Button(ctrl_frame, text="Tạm dừng", command=self.pause_gcode, state=tk.DISABLED)
+        self.pause_btn.grid(row=0, column=1, padx=5, pady=5)
+
+        self.stop_btn = ttk.Button(ctrl_frame, text="Dừng", command=self.stop_gcode, state=tk.DISABLED)
+        self.stop_btn.grid(row=0, column=2, padx=5, pady=5)
+
+        # Thanh tiến trình
+        self.progress_var = tk.IntVar()
+        progress_bar = ttk.Progressbar(gcode_frame, variable=self.progress_var, maximum=100)
+        progress_bar.pack(fill=tk.X, pady=5)
+
+        # Nhãn tiến trình
+        self.progress_label = ttk.Label(gcode_frame, text="0% hoàn thành")
+        self.progress_label.pack(pady=2)
 
         # Điều khiển bút
         pen_frame = ttk.Frame(manual_frame)
@@ -266,14 +344,14 @@ class ScaraGUI:
         speed_frame.pack(fill=tk.X, pady=5)
 
         ttk.Label(speed_frame, text="Tốc độ:").grid(row=0, column=0, padx=5)
-        self.speed_var = tk.StringVar(value="800")
+        self.speed_var = tk.StringVar(value="600")
         speed_entry = ttk.Entry(speed_frame, textvariable=self.speed_var, width=8)
         speed_entry.grid(row=0, column=1, padx=5)
 
         ttk.Button(speed_frame, text="Set", command=self.set_speed).grid(row=0, column=2, padx=5)
 
         ttk.Label(speed_frame, text="Gia tốc:").grid(row=1, column=0, padx=5, pady=5)
-        self.accel_var = tk.StringVar(value="300")
+        self.accel_var = tk.StringVar(value="200")
         accel_entry = ttk.Entry(speed_frame, textvariable=self.accel_var, width=8)
         accel_entry.grid(row=1, column=1, padx=5, pady=5)
 
@@ -405,39 +483,45 @@ class ScaraGUI:
                     self.serial.close()
 
     def send_command(self, command, wait_for_response=True):
-        """Gửi lệnh đến Arduino"""
+        """Gửi lệnh đến Arduino - phiên bản tối ưu"""
         if not self.is_connected or not self.serial or not self.serial.is_open:
             self.log("Chưa kết nối với Arduino!")
             return False
 
         try:
-            # Xóa buffer
-            self.serial.reset_input_buffer()
+            # Nếu có nhiều G-code, giảm log để tăng tốc độ
+            is_gcode_running = self.gcode_running and not command.startswith("g")
+            verbose = not is_gcode_running
+
+            if verbose:
+                self.log(f"Gửi: {command}")
 
             # Gửi lệnh
             cmd = command.strip() + '\n'
             self.serial.write(cmd.encode('utf-8'))
-            self.log(f"Gửi: {command}")
 
             # Đợi phản hồi
             if wait_for_response:
-                time.sleep(0.1)  # Đợi Arduino xử lý
+                # Giảm thời gian đợi cho lệnh G-code
+                timeout = 1.0 if is_gcode_running else 5.0
 
-                # Đọc phản hồi
+                # Đọc phản hồi với timeout
                 responses = []
                 start_time = time.time()
-                while (time.time() - start_time < 5.0):  # Timeout 5 giây
+                while (time.time() - start_time < timeout):
                     if self.serial.in_waiting > 0:
-                        response = self.serial.readline().decode('utf-8').strip()
+                        response = self.serial.readline().decode('utf-8', errors='ignore').strip()
                         if response:
-                            self.log(f"Nhận: {response}")
+                            if verbose:
+                                self.log(f"Nhận: {response}")
                             responses.append(response)
 
                             # Kiểm tra hoàn thành
                             if "MOVE_COMPLETE" in response or "READY" in response:
                                 break
                     else:
-                        time.sleep(0.1)
+                        # Giảm thời gian sleep để tăng tốc độ phản hồi
+                        time.sleep(0.05)
 
                 # Cập nhật trạng thái
                 for response in responses:
@@ -557,7 +641,7 @@ class ScaraGUI:
         """Về home"""
         if self.is_connected:
             # Thay vì về góc 0,0 thì về góc 90,90 - cánh tay thẳng đứng
-            self.send_command("90,90")
+            self.send_command("h")
 
     def test_motors(self):
         """Kiểm tra động cơ"""
@@ -703,6 +787,362 @@ class ScaraGUI:
         except Exception as e:
             self.log(f"Lỗi vẽ robot: {str(e)}")
 
+    def load_gcode(self):
+        """Tải và tối ưu file G-code"""
+        file_path = filedialog.askopenfilename(
+            title="Chọn file G-Code",
+            filetypes=(("G-Code files", "*.gcode *.ngc *.nc"), ("All files", "*.*"))
+        )
+
+        if not file_path:
+            return
+
+        try:
+            with open(file_path, "r") as f:
+                content = f.read()
+
+            # Tối ưu G-code
+            optimized_gcode = []
+            for line in content.split('\n'):
+                line = line.strip()
+
+                # Bỏ qua comment và dòng trống
+                if not line or line.startswith(';'):
+                    continue
+
+                # Chỉ lấy phần lệnh trước comment
+                if ';' in line:
+                    line = line.split(';')[0].strip()
+
+                # Thêm vào list tối ưu
+                if line:
+                    optimized_gcode.append(line)
+
+            # Hiển thị nội dung
+            self.gcode_text.delete(1.0, tk.END)
+            self.gcode_text.insert(tk.END, content)
+
+            # Lưu tên file và G-code đã tối ưu
+            file_name = os.path.basename(file_path)
+            self.file_label.config(text=file_name)
+            self.gcode_lines = optimized_gcode
+            self.gcode_total_lines = len(self.gcode_lines)
+
+            # Hiển thị thông tin
+            self.log(f"Đã tải và tối ưu file G-code: {file_name} ({self.gcode_total_lines} dòng)")
+
+            # Kích hoạt nút chạy
+            self.run_btn.config(state=tk.NORMAL)
+
+        except Exception as e:
+            messagebox.showerror("Lỗi", f"Không thể đọc file: {str(e)}")
+
+    def run_gcode(self):
+        """Bắt đầu chạy G-code"""
+        if not self.is_connected:
+            messagebox.showwarning("Cảnh báo", "Vui lòng kết nối với Arduino trước!")
+            return
+
+        if not self.gcode_lines:
+            messagebox.showwarning("Cảnh báo", "Chưa tải file G-code!")
+            return
+
+        if self.gcode_running and self.gcode_paused:
+            # Tiếp tục từ trạng thái tạm dừng
+            self.gcode_paused = False
+            self.pause_btn.config(text="Tạm dừng")
+            self.log("Tiếp tục xử lý G-code")
+            return
+
+        # Nếu đang chạy thì không làm gì
+        if self.gcode_running and not self.gcode_paused:
+            return
+
+        # Bắt đầu xử lý từ đầu
+        self.gcode_running = True
+        self.gcode_paused = False
+        self.gcode_line_num = 0
+        self.progress_var.set(0)
+        self.progress_label.config(text="0% hoàn thành")
+
+        # Gửi lệnh bắt đầu đến Arduino
+        self.send_command("gstart", wait_for_response=True)
+
+        # Kích hoạt nút tạm dừng và dừng
+        self.pause_btn.config(text="Tạm dừng", state=tk.NORMAL)
+        self.stop_btn.config(state=tk.NORMAL)
+        self.run_btn.config(state=tk.DISABLED)
+
+        # Tạo và bắt đầu thread xử lý G-code
+        self.gcode_thread = threading.Thread(target=self.process_gcode, daemon=True)
+        self.gcode_thread.start()
+
+        self.log("Bắt đầu xử lý G-code")
+
+    def process_gcode(self):
+        """Thread xử lý G-code - phiên bản chậm và ổn định"""
+        try:
+            while self.gcode_line_num < self.gcode_total_lines and self.gcode_running:
+                # Kiểm tra tạm dừng
+                if self.gcode_paused:
+                    time.sleep(0.1)
+                    continue
+
+                # Lấy dòng tiếp theo
+                line = self.gcode_lines[self.gcode_line_num].strip()
+
+                # Bỏ qua comment và dòng trống
+                if line and not line.startswith(";"):
+                    # Highlight dòng hiện tại
+                    self.highlight_current_line(self.gcode_line_num)
+
+                    # Gửi lệnh và bắt buộc đợi phản hồi
+                    try:
+                        # Xóa buffer trước khi gửi
+                        if self.serial and self.serial.is_open:
+                            self.serial.reset_input_buffer()
+
+                        # Gửi lệnh
+                        cmd = line.strip() + '\n'
+                        self.serial.write(cmd.encode('utf-8'))
+                        self.log(f"Gửi: {line}")
+
+                        # ===== QUAN TRỌNG: Đợi lâu hơn =====
+                        time.sleep(0.5)  # Chờ 500ms cho Arduino xử lý
+
+                        # Đọc phản hồi
+                        response_received = False
+                        start_time = time.time()
+                        while (time.time() - start_time < 3.0):  # Thời gian chờ tối đa 3 giây
+                            if self.serial and self.serial.in_waiting > 0:
+                                response = self.serial.readline().decode('utf-8', errors='ignore').strip()
+                                if response:
+                                    self.log(f"Nhận: {response}")
+                                    response_received = True
+
+                                    # Kiểm tra hoàn thành
+                                    if any(x in response for x in ["MOVE_COMPLETE", "READY", "OK"]):
+                                        break
+                            else:
+                                time.sleep(0.1)  # Đợi thêm dữ liệu
+
+                        # Nếu không nhận được phản hồi, chờ thêm
+                        if not response_received:
+                            self.log("Không nhận được phản hồi, đợi thêm...")
+                            time.sleep(1.0)  # Đợi thêm 1 giây
+
+                    except Exception as e:
+                        self.log(f"Lỗi gửi G-code: {str(e)}")
+                        if "PermissionError" in str(e):
+                            self.log("Kết nối bị mất, thử kết nối lại...")
+                            self.reconnect()
+                            time.sleep(2.0)  # Đợi kết nối ổn định
+                        else:
+                            # Tạm dừng nếu gặp lỗi
+                            self.gcode_paused = True
+                            self.pause_btn.config(text="Tiếp tục")
+                            return
+
+                # Tăng dòng và cập nhật tiến trình
+                self.gcode_line_num += 1
+                progress = int(100 * self.gcode_line_num / self.gcode_total_lines)
+                self.root.after(0, lambda p=progress: self.update_progress(p))
+
+            # Hoàn thành
+            if self.gcode_running:
+                self.root.after(0, self.complete_gcode)
+
+        except Exception as e:
+            self.root.after(0, lambda: self.log(f"Lỗi xử lý G-code: {str(e)}"))
+            self.root.after(0, self.stop_gcode)
+
+    def highlight_current_line(self, line_num):
+        """Highlight dòng G-code hiện tại"""
+        self.root.after(0, lambda: self.gcode_text.tag_remove("current", "1.0", tk.END))
+
+        # Tính toán vị trí dòng
+        pos = f"{line_num + 1}.0"
+        end_pos = f"{line_num + 1}.end"
+
+        # Highlight dòng
+        self.root.after(0, lambda: self.gcode_text.tag_add("current", pos, end_pos))
+        self.root.after(0, lambda: self.gcode_text.tag_config("current", background="yellow"))
+
+        # Scroll để hiển thị dòng hiện tại
+        self.root.after(0, lambda: self.gcode_text.see(pos))
+
+    def update_progress(self, progress):
+        """Cập nhật thanh tiến trình"""
+        self.progress_var.set(progress)
+        self.progress_label.config(text=f"{progress}% hoàn thành")
+
+        # Cập nhật log
+        if progress % 10 == 0:
+            self.log(f"Tiến trình G-code: {progress}%")
+
+    def pause_gcode(self):
+        """Tạm dừng/tiếp tục xử lý G-code"""
+        if not self.gcode_running:
+            return
+
+        self.gcode_paused = not self.gcode_paused
+
+        if self.gcode_paused:
+            self.pause_btn.config(text="Tiếp tục")
+            self.log("Tạm dừng xử lý G-code")
+        else:
+            self.pause_btn.config(text="Tạm dừng")
+            self.log("Tiếp tục xử lý G-code")
+
+    def stop_gcode(self):
+        """Dừng xử lý G-code"""
+        if not self.gcode_running:
+            return
+
+        self.gcode_running = False
+        self.gcode_paused = False
+
+        # Gửi lệnh kết thúc đến Arduino
+        self.send_command("gend", wait_for_response=True)
+
+        # Reset UI
+        self.run_btn.config(state=tk.NORMAL)
+        self.pause_btn.config(state=tk.DISABLED)
+        self.stop_btn.config(state=tk.DISABLED)
+
+        # Xóa highlight
+        self.gcode_text.tag_remove("current", "1.0", tk.END)
+
+        self.log("Đã dừng xử lý G-code")
+
+    def complete_gcode(self):
+        """Hoàn thành xử lý G-code"""
+        self.gcode_running = False
+
+        # Gửi lệnh kết thúc đến Arduino
+        self.send_command("gend", wait_for_response=True)
+
+        # Reset UI
+        self.run_btn.config(state=tk.NORMAL)
+        self.pause_btn.config(state=tk.DISABLED)
+        self.stop_btn.config(state=tk.DISABLED)
+
+        # Xóa highlight
+        self.gcode_text.tag_remove("current", "1.0", tk.END)
+
+        # Cập nhật tiến trình
+        self.progress_var.set(100)
+        self.progress_label.config(text="100% hoàn thành")
+
+        self.log("Đã hoàn thành xử lý G-code")
+
+    def create_workspace_visualization(self):
+        """Tạo dữ liệu trực quan hóa vùng làm việc"""
+        points = []
+        resolution = 1.0  # cm
+
+        bounds = self.workspace_bounds
+        x_range = np.arange(bounds['left'], bounds['right'] + resolution, resolution)
+        y_range = np.arange(bounds['bottom'], bounds['top'] + resolution, resolution)
+
+        for x in x_range:
+            for y in y_range:
+                if self.check_point_in_workspace(x, y):
+                    points.append((x, y))
+
+        return points
+    # Trong ScaraGUI, thêm nút hiển thị vùng làm việc:
+    def show_workspace(self):
+        """Hiển thị vùng làm việc trên canvas"""
+        points = self.robot.create_workspace_visualization()
+
+        # Xóa canvas hiện tại và vẽ khung
+        self.update_canvas()
+
+        # Vẽ các điểm trong vùng làm việc
+        canvas_width = self.canvas.winfo_width() or 500
+        canvas_height = self.canvas.winfo_height() or 400
+        scale = min(canvas_width, canvas_height) / 100
+        cx = canvas_width / 2
+        cy = canvas_height / 2
+
+        # Vẽ từng điểm
+        for x, y in points:
+            px = cx + x * scale
+            py = cy - y * scale
+            self.canvas.create_rectangle(px - 1, py - 1, px + 1, py + 1, fill="lightblue", outline="")
+
+        self.log(f"Hiển thị {len(points)} điểm trong vùng làm việc")
+
+    def reconnect(self):
+        """Kết nối lại với Arduino"""
+        try:
+            self.log("Đang thử kết nối lại...")
+
+            if self.serial and self.serial.is_open:
+                self.serial.close()
+
+            time.sleep(1.0)  # Đợi port được giải phóng
+
+            port = self.port_var.get()
+            baud = int(self.baud_var.get())
+            self.serial = serial.Serial(port, baud, timeout=2)
+
+            # Đợi Arduino khởi động lại
+            time.sleep(2.0)
+
+            # Kiểm tra kết nối
+            self.serial.write(b"status\n")
+            time.sleep(0.5)
+
+            response = ""
+            if self.serial.in_waiting:
+                response = self.serial.readline().decode('utf-8', errors='replace').strip()
+
+            if "READY" in response or "SCARA_READY" in response:
+                self.is_connected = True
+                self.log("✓ Kết nối lại thành công")
+                return True
+
+            self.log(f"❌ Kết nối lại thất bại. Phản hồi: {response}")
+            self.is_connected = False
+            return False
+
+        except Exception as e:
+            self.log(f"❌ Lỗi kết nối lại: {str(e)}")
+            self.is_connected = False
+            return False
+
+    def split_and_run_gcode(self):
+        """Chia nhỏ và chạy G-code theo đợt"""
+        batch_size = 5  # Số lệnh mỗi đợt
+
+        batches = []
+        current_batch = []
+
+        for line in self.gcode_lines:
+            if line and not line.startswith(";"):
+                current_batch.append(line)
+                if len(current_batch) >= batch_size:
+                    batches.append(current_batch)
+                    current_batch = []
+
+        # Thêm batch cuối nếu còn
+        if current_batch:
+            batches.append(current_batch)
+
+        # Chạy từng batch
+        self.log(f"Chia G-code thành {len(batches)} đợt")
+
+        for i, batch in enumerate(batches):
+            self.log(f"Đang chạy đợt {i + 1}/{len(batches)}")
+            # Gửi từng lệnh trong batch
+            for line in batch:
+                self.send_command(line, wait_for_response=True)
+                time.sleep(0.5)  # Đợi giữa các lệnh
+
+            # Đợi hoàn thành đợt
+            time.sleep(1.0)
 
 def main():
     root = tk.Tk()
