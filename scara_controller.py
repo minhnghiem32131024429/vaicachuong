@@ -86,8 +86,19 @@ class ScaraRobot:
 
         return (x2, y2), (x3, y3), (x4, y4)
 
-    def inverse_kinematics(self, x3, y3):
-        """Tính toán góc quay của các khớp dựa trên vị trí đầu vẽ - không giới hạn góc"""
+    def inverse_kinematics(self, x3, y3, current_config=None):
+        """
+        Tính toán góc quay của các khớp dựa trên vị trí đầu vẽ
+        Phiên bản đã điều chỉnh dấu cho phù hợp với hệ thống thực tế
+
+        Args:
+            x3, y3: Tọa độ điểm đầu vẽ
+            current_config: Cấu hình hiện tại ('elbow_up', 'elbow_down', hoặc None)
+
+        Returns:
+            (theta1, theta2, config) hoặc (None, None, None) nếu không tìm được giải pháp
+        """
+        # Lấy thông số robot
         x1 = self.robot_params['x1']
         y1 = self.robot_params['y1']
         x5 = self.robot_params['x5']
@@ -97,39 +108,125 @@ class ScaraRobot:
         L3 = self.robot_params['L3']
         L4 = self.robot_params['L4']
 
-        # Tính khoảng cách từ điểm vẽ đến motor
-        L13 = np.sqrt((x3 - x1) ** 2 + (y3 - y1) ** 2)
-        L53 = np.sqrt((x3 - x5) ** 2 + (y3 - y5) ** 2)
+        # Giới hạn góc
+        THETA1_MIN, THETA1_MAX = -120, 150  # Giới hạn góc động cơ 1
+        THETA2_MIN, THETA2_MAX = 30, 300  # Giới hạn góc động cơ 2
 
-        # Kiểm tra khoảng cách có hợp lý không
-        if (L13 < abs(L1 - L2) or L13 > L1 + L2 or
-                L53 < abs(L4 - L3) or L53 > L4 + L3):
-            return None, None  # Điểm nằm ngoài phạm vi khoảng cách
+        # Tính khoảng cách từ điểm vẽ đến các động cơ
+        L13_sq = (x3 - x1) ** 2 + (y3 - y1) ** 2
+        L13 = np.sqrt(L13_sq)
+        L53_sq = (x3 - x5) ** 2 + (y3 - y5) ** 2
+        L53 = np.sqrt(L53_sq)
 
-        # Tính góc cho motor 1
-        alpha_one = np.arccos(np.clip((L1 ** 2 + L13 ** 2 - L2 ** 2) / (2 * L1 * L13), -1, 1))
-        beta_one = np.arctan2(y3 - y1, x3 - x1)
-        theta1 = np.degrees(beta_one - alpha_one)
+        # Kiểm tra điểm có nằm trong phạm vi không - thêm biên an toàn 0.1cm
+        min_dist1 = abs(L1 - L2) + 0.1
+        max_dist1 = L1 + L2 - 0.1
+        min_dist2 = abs(L4 - L3) + 0.1
+        max_dist2 = L4 + L3 - 0.1
 
-        # Tính góc cho motor 2
-        alpha_five = np.arccos(np.clip((L4 ** 2 + L53 ** 2 - L3 ** 2) / (2 * L4 * L53), -1, 1))
-        beta_five = np.arctan2(y3 - y5, x3 - x5)
-        theta2 = np.degrees(beta_five + alpha_five)
+        if (L13 < min_dist1 or L13 > max_dist1 or L53 < min_dist2 or L53 > max_dist2):
+            return None, None, None  # Điểm nằm ngoài phạm vi
+
+        # ===== Tính góc cho motor 1 (Motor Y) =====
+        cos_alpha1 = (L1 ** 2 + L13_sq - L2 ** 2) / (2 * L1 * L13)
+
+        # Xử lý lỗi số học - clip để tránh lỗi domain error
+        if abs(cos_alpha1) > 1.0 + 1e-10:
+            return None, None, None
+
+        cos_alpha1 = np.clip(cos_alpha1, -1.0, 1.0)
+        alpha1 = np.arccos(cos_alpha1)
+        beta1 = np.arctan2(y3 - y1, x3 - x1)
+
+        # ĐẢO DẤU: Đổi dấu cho phù hợp với hệ thống thực tế
+        # Khuỷu hướng xuống và hướng lên được đổi để phù hợp với thực tế
+        theta1_elbow_down = np.degrees(beta1 + alpha1)  # Khuỷu hướng xuống (đảo dấu)
+        theta1_elbow_up = np.degrees(beta1 - alpha1)  # Khuỷu hướng lên (đảo dấu)
+
+        # ===== Tính góc cho motor 2 (Motor X) =====
+        cos_alpha5 = (L4 ** 2 + L53_sq - L3 ** 2) / (2 * L4 * L53)
+
+        if abs(cos_alpha5) > 1.0 + 1e-10:
+            return None, None, None
+
+        cos_alpha5 = np.clip(cos_alpha5, -1.0, 1.0)
+        alpha5 = np.arccos(cos_alpha5)
+        beta5 = np.arctan2(y3 - y5, x3 - x5)
+
+        # ĐẢO DẤU: Đổi dấu cho motor X
+        theta2_elbow_down = np.degrees(beta5 - alpha5)  # Khuỷu hướng xuống (đảo dấu)
+        theta2_elbow_up = np.degrees(beta5 + alpha5)  # Khuỷu hướng lên (đảo dấu)
 
         # Chuẩn hóa góc về khoảng [-180, 180]
-        while theta1 > 180: theta1 -= 360
-        while theta1 < -180: theta1 += 360
-        while theta2 > 180: theta2 -= 360
-        while theta2 < -180: theta2 += 360
+        def normalize_angle(angle):
+            while angle > 180: angle -= 360
+            while angle < -180: angle += 360
+            return angle
 
-        # BỎ QUA MỌI KIỂM TRA GIỚI HẠN GÓC
-        return theta1, theta2
+        theta1_elbow_down = normalize_angle(theta1_elbow_down)
+        theta1_elbow_up = normalize_angle(theta1_elbow_up)
+        theta2_elbow_down = normalize_angle(theta2_elbow_down)
+        theta2_elbow_up = normalize_angle(theta2_elbow_up)
+
+        # Kiểm tra các giải pháp có thỏa mãn giới hạn góc không
+        solutions = []
+
+        # Kiểm tra cấu hình khuỷu xuống
+        if (THETA1_MIN <= theta1_elbow_down <= THETA1_MAX and
+                THETA2_MIN <= theta2_elbow_down <= THETA2_MAX):
+            solutions.append(("elbow_down", theta1_elbow_down, theta2_elbow_down))
+
+        # Kiểm tra cấu hình khuỷu lên
+        if (THETA1_MIN <= theta1_elbow_up <= THETA1_MAX and
+                THETA2_MIN <= theta2_elbow_up <= THETA2_MAX):
+            solutions.append(("elbow_up", theta1_elbow_up, theta2_elbow_up))
+
+        if not solutions:
+            return None, None, None  # Không có giải pháp thỏa mãn giới hạn góc
+
+        # Chọn giải pháp phù hợp
+        if current_config is not None and len(solutions) > 1:
+            # Nếu có cấu hình hiện tại, ưu tiên giữ nguyên cấu hình
+            for config, theta1, theta2 in solutions:
+                if config == current_config:
+                    return theta1, theta2, config
+
+        # Nếu không có cấu hình hiện tại hoặc không thể giữ nguyên cấu hình
+        # Chọn giải pháp đầu tiên
+        config, theta1, theta2 = solutions[0]
+        return theta1, theta2, config
+
+    def check_point_in_workspace(self, x, y):
+        """Kiểm tra nhanh xem điểm có nằm trong vùng làm việc không"""
+        # Thông số
+        x1, y1 = self.robot_params['x1'], self.robot_params['y1']
+        x5, y5 = self.robot_params['x5'], self.robot_params['y5']
+
+        # Kiểm tra khoảng cách đến động cơ - tính toán nhanh
+        d1_sq = (x - x1) ** 2 + (y - y1) ** 2  # Bình phương khoảng cách đến motor 1
+        d2_sq = (x - x5) ** 2 + (y - y5) ** 2  # Bình phương khoảng cách đến motor 2
+
+        # Kiểm tra điều kiện bán kính - tránh tính căn bậc 2
+        r1_min_sq = self.r1_min ** 2
+        r1_max_sq = self.r1_max ** 2
+        r2_min_sq = self.r2_min ** 2
+        r2_max_sq = self.r2_max ** 2
+
+        # Kiểm tra điều kiện bán kính
+        if (r1_min_sq <= d1_sq <= r1_max_sq and
+                r2_min_sq <= d2_sq <= r2_max_sq):
+            # Chỉ tính động học ngược nếu cần
+            theta1, theta2, _ = self.inverse_kinematics(x, y)
+            return theta1 is not None and theta2 is not None
+
+        return False
 
 class ScaraGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("SCARA Controller")
         self.root.geometry("1000x700")
+        self.current_config = None  # Track the current elbow configuration
 
         # Khởi tạo robot và Serial
         self.robot = ScaraRobot()
@@ -680,7 +777,7 @@ class ScaraGUI:
             messagebox.showerror("Lỗi", "Giá trị góc không hợp lệ!")
 
     def move_to_xy(self):
-        """Di chuyển đến tọa độ XY không kiểm tra vùng làm việc"""
+        """Di chuyển đến tọa độ XY"""
         if not self.is_connected:
             messagebox.showwarning("Cảnh báo", "Vui lòng kết nối với Arduino!")
             return
@@ -689,32 +786,30 @@ class ScaraGUI:
             x = float(self.x_entry.get())
             y = float(self.y_entry.get())
 
-            # Tính góc - bỏ qua kiểm tra vùng làm việc
-            theta1, theta2 = self.robot.inverse_kinematics(x, y)
-
-            # Nếu không tính được góc, báo lỗi nhưng không ngăn chặn
-            if theta1 is None or theta2 is None:
-                self.log(f"Cảnh báo: Không tính được góc cho ({x}, {y}), nhưng vẫn tiếp tục...")
+            # Kiểm tra vùng làm việc
+            if not self.robot.check_point_in_workspace(x, y):
+                messagebox.showwarning("Cảnh báo", f"Vị trí ({x}, {y}) nằm ngoài vùng làm việc!")
                 return
 
-            # Đổi thứ tự theta cho đúng với X, Y
-            theta_x = theta2  # Góc X = theta2 (từ IK)
-            theta_y = theta1  # Góc Y = theta1 (từ IK)
+            # Tính góc với cấu hình hiện tại
+            theta1, theta2, new_config = self.robot.inverse_kinematics(x, y, self.current_config)
 
-            # Cập nhật giá trị cho góc (đã đổi thứ tự)
+            if theta1 is None or theta2 is None:
+                messagebox.showwarning("Cảnh báo", f"Không thể tính góc cho vị trí ({x}, {y})!")
+                return
+
+            # Cập nhật cấu hình hiện tại
+            self.current_config = new_config
+            self.log(f"Sử dụng cấu hình: {new_config}")
+
+            # Cập nhật giá trị cho góc
             self.angle1_entry.delete(0, tk.END)
-            self.angle1_entry.insert(0, f"{theta_x:.2f}")  # Góc 1 = X
+            self.angle1_entry.insert(0, f"{theta1:.2f}")
             self.angle2_entry.delete(0, tk.END)
-            self.angle2_entry.insert(0, f"{theta_y:.2f}")  # Góc 2 = Y
+            self.angle2_entry.insert(0, f"{theta2:.2f}")
 
-            # Gửi lệnh với góc phù hợp với Arduino
-            command = f"{theta_x:.2f},{theta_y:.2f}"
-            self.log(f"Gửi lệnh: {command}")
-            self.send_command(command)
-
-            # Cập nhật vị trí (giữ theta1,theta2 gốc cho mô phỏng)
-            self.current_position = {'x': x, 'y': y}
-            self.update_position(theta1, theta2)
+            # Di chuyển
+            self.send_command(f"{theta1:.2f},{theta2:.2f}")
 
         except ValueError:
             messagebox.showerror("Lỗi", "Giá trị tọa độ không hợp lệ!")
@@ -1023,7 +1118,7 @@ class ScaraGUI:
         self.log("Bắt đầu xử lý G-code")
 
     def process_gcode(self):
-        """Thread xử lý G-code - phiên bản chậm và ổn định"""
+        """Thread xử lý G-code - phiên bản cải tiến"""
         try:
             while self.gcode_line_num < self.gcode_total_lines and self.gcode_running:
                 # Kiểm tra tạm dừng
@@ -1039,52 +1134,54 @@ class ScaraGUI:
                     # Highlight dòng hiện tại
                     self.highlight_current_line(self.gcode_line_num)
 
-                    # Gửi lệnh và bắt buộc đợi phản hồi
+                    # === XỬ LÝ G-CODE TRÊN PYTHON TRƯỚC KHI GỬI ĐẾN ARDUINO ===
                     try:
-                        # Xóa buffer trước khi gửi
-                        if self.serial and self.serial.is_open:
-                            self.serial.reset_input_buffer()
+                        # Phân tích G-code
+                        if any(line.upper().startswith(cmd) for cmd in ["G0", "G1", "G00", "G01"]):
+                            # Phân tích tọa độ X, Y từ G-code
+                            x, y = None, None
+                            parts = line.upper().split()
+                            for part in parts:
+                                if part.startswith('X'):
+                                    try:
+                                        x = float(part[1:])
+                                    except ValueError:
+                                        pass
+                                elif part.startswith('Y'):
+                                    try:
+                                        y = float(part[1:])
+                                    except ValueError:
+                                        pass
 
-                        # Gửi lệnh
-                        cmd = line.strip() + '\n'
-                        self.serial.write(cmd.encode('utf-8'))
-                        self.log(f"Gửi: {line}")
+                            # Nếu có tọa độ X, Y hợp lệ
+                            if x is not None and y is not None:
+                                self.log(f"G-code: Đang di chuyển đến X={x}, Y={y}")
 
-                        # ===== QUAN TRỌNG: Đợi lâu hơn =====
-                        time.sleep(0.5)  # Chờ 500ms cho Arduino xử lý
+                                # Tính góc bằng inverse kinematics và di chuyển
+                                theta1, theta2, new_config = self.robot.inverse_kinematics(x, y, self.current_config)
 
-                        # Đọc phản hồi
-                        response_received = False
-                        start_time = time.time()
-                        while (time.time() - start_time < 3.0):  # Thời gian chờ tối đa 3 giây
-                            if self.serial and self.serial.in_waiting > 0:
-                                response = self.serial.readline().decode('utf-8', errors='ignore').strip()
-                                if response:
-                                    self.log(f"Nhận: {response}")
-                                    response_received = True
-
-                                    # Kiểm tra hoàn thành
-                                    if any(x in response for x in ["MOVE_COMPLETE", "READY", "OK"]):
-                                        break
+                                if theta1 is not None and theta2 is not None:
+                                    self.current_config = new_config
+                                    # Gửi góc trực tiếp đến Arduino
+                                    self.send_command(f"{theta1:.2f},{theta2:.2f}")
+                                else:
+                                    self.log(f"Lỗi: Không thể tính góc cho vị trí X={x}, Y={y}")
+                                    # Tạm dừng nếu gặp lỗi
+                                    self.gcode_paused = True
+                                    self.root.after(0, lambda: self.pause_btn.config(text="Tiếp tục"))
+                                    return
                             else:
-                                time.sleep(0.1)  # Đợi thêm dữ liệu
-
-                        # Nếu không nhận được phản hồi, chờ thêm
-                        if not response_received:
-                            self.log("Không nhận được phản hồi, đợi thêm...")
-                            time.sleep(1.0)  # Đợi thêm 1 giây
+                                # Gửi lệnh G-code nguyên dạng nếu không phải lệnh di chuyển XY
+                                self.send_command(line)
+                        else:
+                            # Gửi lệnh G-code nguyên dạng cho các lệnh khác
+                            self.send_command(line)
 
                     except Exception as e:
-                        self.log(f"Lỗi gửi G-code: {str(e)}")
-                        if "PermissionError" in str(e):
-                            self.log("Kết nối bị mất, thử kết nối lại...")
-                            self.reconnect()
-                            time.sleep(2.0)  # Đợi kết nối ổn định
-                        else:
-                            # Tạm dừng nếu gặp lỗi
-                            self.gcode_paused = True
-                            self.pause_btn.config(text="Tiếp tục")
-                            return
+                        self.log(f"Lỗi xử lý G-code: {str(e)}")
+                        self.gcode_paused = True
+                        self.root.after(0, lambda: self.pause_btn.config(text="Tiếp tục"))
+                        return
 
                 # Tăng dòng và cập nhật tiến trình
                 self.gcode_line_num += 1
