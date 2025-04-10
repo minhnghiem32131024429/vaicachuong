@@ -8,6 +8,7 @@ import numpy as np
 import re
 import os
 import queue
+import math
 
 class ScaraRobot:
     def __init__(self):
@@ -132,7 +133,12 @@ class ScaraRobot:
                 abs(theta1 - theta2) > THETA_DIFF_MAX):
             return None, None  # Góc nằm ngoài giới hạn
 
-        return theta1, theta2
+        # THAY ĐỔI QUAN TRỌNG: Hoán đổi kết quả theta1 và theta2
+        # và đảo chiều góc nếu cần
+        return {
+            'theta2': math.degrees(theta1),  # Góc 1 điều khiển motor X (trước đây là theta1)
+            'theta1': math.degrees(theta2)  # Góc 2 điều khiển motor Y (trước đây là theta2)
+        }
 
     def check_point_in_workspace(self, x, y):
         """Kiểm tra nhanh xem điểm có nằm trong vùng làm việc không"""
@@ -182,12 +188,37 @@ class ScaraGUI:
         self.gcode_total_lines = 0
         self.gcode_queue = queue.Queue()
 
+        # Thêm queue cho lệnh
+        self.command_queue = queue.Queue()
+        self.command_processing = False
+
+        # Thêm xử lý lệnh
+        self.process_command_thread = threading.Thread(target=self._process_command_queue, daemon=True)
+        self.process_command_thread.start()
+
         # Tạo giao diện
         self.create_widgets()
         self.update_canvas()
 
         # Cập nhật danh sách cổng COM
         self.update_ports()
+
+    # Thêm phương thức xử lý hàng đợi lệnh
+    def _process_command_queue(self):
+        """Xử lý hàng đợi lệnh trong luồng riêng"""
+        while True:
+            try:
+                if not self.command_processing and not self.command_queue.empty():
+                    command, wait_response = self.command_queue.get()
+                    self.command_processing = True
+                    self._execute_command(command, wait_response)
+                    self.command_processing = False
+                else:
+                    time.sleep(0.01)
+            except Exception as e:
+                print(f"Error in command queue: {str(e)}")
+                self.command_processing = False
+                time.sleep(0.1)
 
     def create_widgets(self):
         # Frame chính
@@ -406,7 +437,7 @@ class ScaraGUI:
             self.port_var.set(ports[0])
 
     def toggle_connection(self):
-        """Kết nối hoặc ngắt kết nối với Arduino"""
+        """Kết nối hoặc ngắt kết nối với Arduino - phiên bản cải tiến"""
         if self.is_connected:
             if self.serial and self.serial.is_open:
                 self.serial.close()
@@ -432,49 +463,41 @@ class ScaraGUI:
                 self.serial = serial.Serial(port, baud, timeout=2)
 
                 # Chờ Arduino khởi động
-                time.sleep(2.5)
+                time.sleep(2.0)
 
                 # Xóa bộ đệm
                 self.serial.reset_input_buffer()
                 self.serial.reset_output_buffer()
 
-                # Kiểm tra kết nối
+                # Kiểm tra kết nối - CẢI TIẾN: Chấp nhận nhiều loại phản hồi
                 self.log("Gửi lệnh kiểm tra...")
                 self.serial.write(b"status\n")
-                time.sleep(0.5)
 
-                # Đọc và hiển thị toàn bộ phản hồi để debug
-                response_text = ""
-                attempts = 0
-                while attempts < 3:  # Thử tối đa 3 lần
-                    if self.serial.in_waiting:
-                        response = self.serial.readline().decode('utf-8', errors='replace').strip()
+                # Đọc hết tất cả phản hồi hiện có
+                time.sleep(1.0)
+                responses = []
+                while self.serial.in_waiting:
+                    response = self.serial.readline().decode('utf-8', errors='replace').strip()
+                    if response:
                         self.log(f"Nhận được: '{response}'")
-                        response_text += response
+                        responses.append(response)
 
-                        # Kiểm tra nếu có phản hồi hợp lệ
-                        if any(x in response for x in ["READY", "SCARA_READY", "OK"]):
-                            self.is_connected = True
-                            self.connect_btn.configure(text="Ngắt kết nối")
-                            self.log(f"✓ Kết nối thành công với {port}")
+                # THAY ĐỔI QUAN TRỌNG: Chấp nhận bất kỳ phản hồi nào coi là kết nối thành công
+                if len(responses) > 0:
+                    self.is_connected = True
+                    self.connect_btn.configure(text="Ngắt kết nối")
+                    self.log(f"✓ Kết nối thành công với {port}")
 
-                            # Thiết lập tốc độ và gia tốc
-                            self.set_speed()
-                            self.set_acceleration()
-                            return
-                    else:
-                        attempts += 1
-                        self.log(f"Không nhận được phản hồi, thử lại... ({attempts}/3)")
-                        self.serial.write(b"status\n")
-                        time.sleep(1.0)
+                    # Thiết lập tốc độ và gia tốc
+                    self.set_speed()
+                    self.set_acceleration()
+                    return
 
-                # Nếu không nhận được phản hồi đúng sau 3 lần
-                self.log(f"❌ Không nhận được phản hồi hợp lệ từ Arduino!")
-                self.log("Phản hồi nhận được: " + (response_text if response_text else "Không có"))
+                # Không nhận được phản hồi nào
+                self.log(f"❌ Không nhận được phản hồi từ Arduino!")
                 self.serial.close()
                 messagebox.showwarning("Cảnh báo",
-                                       "Không nhận được phản hồi đúng từ Arduino.\nKiểm tra lại cổng COM và đảm bảo Arduino đã được nạp firmware đúng.")
-                self.is_connected = False
+                                       "Không nhận được phản hồi từ Arduino.\nKiểm tra lại cổng COM và firmware.")
 
             except Exception as e:
                 self.log(f"❌ Lỗi kết nối: {str(e)}")
@@ -482,30 +505,108 @@ class ScaraGUI:
                 if self.serial and self.serial.is_open:
                     self.serial.close()
 
+    def _connect_serial(self):
+        """Thực hiện kết nối trong luồng riêng"""
+        port = self.port_var.get()
+        baud = int(self.baud_var.get())
+
+        if not port:
+            self.root.after(0, lambda: messagebox.showerror("Lỗi", "Vui lòng chọn cổng COM!"))
+            return
+
+        try:
+            # Đóng kết nối cũ nếu có
+            if self.serial and self.serial.is_open:
+                self.serial.close()
+                time.sleep(0.5)
+
+            # Tạo kết nối mới
+            self.root.after(0, lambda: self.log(f"Đang kết nối đến {port} với baud {baud}..."))
+            self.serial = serial.Serial(port, baud, timeout=1)  # Giảm timeout xuống 1 giây
+
+            # Chờ Arduino khởi động
+            time.sleep(1.5)  # Giảm thời gian chờ
+
+            # Xóa bộ đệm
+            self.serial.reset_input_buffer()
+            self.serial.reset_output_buffer()
+
+            # Kiểm tra kết nối
+            self.root.after(0, lambda: self.log("Gửi lệnh kiểm tra..."))
+            self.serial.write(b"status\n")
+
+            # Đọc phản hồi
+            response_text = ""
+            attempts = 0
+            while attempts < 2:  # Giảm số lần thử
+                if self.serial.in_waiting:
+                    response = self.serial.readline().decode('utf-8', errors='replace').strip()
+                    self.root.after(0, lambda r=response: self.log(f"Nhận được: '{r}'"))
+                    response_text += response
+
+                    # Kiểm tra phản hồi hợp lệ
+                    if any(x in response for x in ["READY", "SCARA_READY", "OK"]):
+                        self.is_connected = True
+                        self.root.after(0, lambda: self.connect_btn.configure(text="Ngắt kết nối"))
+                        self.root.after(0, lambda: self.log(f"✓ Kết nối thành công với {port}"))
+
+                        # Thiết lập tốc độ và gia tốc
+                        time.sleep(0.1)
+                        self.serial.write(f"f{self.speed_var.get()}\n".encode('utf-8'))
+                        time.sleep(0.1)
+                        self.serial.write(f"a{self.accel_var.get()}\n".encode('utf-8'))
+                        return
+                else:
+                    attempts += 1
+                    self.root.after(0, lambda a=attempts: self.log(f"Không nhận được phản hồi, thử lại... ({a}/2)"))
+                    self.serial.write(b"status\n")
+                    time.sleep(0.5)  # Giảm thời gian chờ
+
+            # Xử lý khi kết nối thất bại
+            self.root.after(0, lambda: self.log(f"❌ Không nhận được phản hồi hợp lệ từ Arduino!"))
+            if self.serial and self.serial.is_open:
+                self.serial.close()
+            self.root.after(0, lambda: messagebox.showwarning("Cảnh báo",
+                                                              "Không nhận được phản hồi đúng từ Arduino.\nKiểm tra lại cổng COM và firmware."))
+
+        except Exception as e:
+            self.root.after(0, lambda: self.log(f"❌ Lỗi kết nối: {str(e)}"))
+            self.root.after(0, lambda e=str(e): messagebox.showerror("Lỗi", f"Không thể kết nối: {e}"))
+            if self.serial and self.serial.is_open:
+                self.serial.close()
+
     def send_command(self, command, wait_for_response=True):
-        """Gửi lệnh đến Arduino - phiên bản tối ưu"""
+        """Gửi lệnh đến Arduino - phiên bản không chặn UI"""
         if not self.is_connected or not self.serial or not self.serial.is_open:
             self.log("Chưa kết nối với Arduino!")
             return False
 
+        # Tạo và bắt đầu luồng cho giao tiếp serial
+        command_thread = threading.Thread(
+            target=self._execute_command,
+            args=(command, wait_for_response),
+            daemon=True
+        )
+        command_thread.start()
+        return True
+
+    def _execute_command(self, command, wait_for_response):
+        """Thực thi lệnh trong luồng riêng"""
         try:
-            # Nếu có nhiều G-code, giảm log để tăng tốc độ
             is_gcode_running = self.gcode_running and not command.startswith("g")
             verbose = not is_gcode_running
 
             if verbose:
-                self.log(f"Gửi: {command}")
+                self.root.after(0, lambda: self.log(f"Gửi: {command}"))
 
             # Gửi lệnh
             cmd = command.strip() + '\n'
             self.serial.write(cmd.encode('utf-8'))
 
-            # Đợi phản hồi
             if wait_for_response:
-                # Giảm thời gian đợi cho lệnh G-code
-                timeout = 1.0 if is_gcode_running else 5.0
+                # Giảm thời gian chờ xuống
+                timeout = 0.5 if is_gcode_running else 2.0
 
-                # Đọc phản hồi với timeout
                 responses = []
                 start_time = time.time()
                 while (time.time() - start_time < timeout):
@@ -513,37 +614,40 @@ class ScaraGUI:
                         response = self.serial.readline().decode('utf-8', errors='ignore').strip()
                         if response:
                             if verbose:
-                                self.log(f"Nhận: {response}")
+                                self.root.after(0, lambda r=response: self.log(f"Nhận: {r}"))
                             responses.append(response)
 
                             # Kiểm tra hoàn thành
-                            if "MOVE_COMPLETE" in response or "READY" in response:
+                            if "MOVE_COMPLETE" in response or "READY" in response or "OK" in response:
                                 break
                     else:
-                        # Giảm thời gian sleep để tăng tốc độ phản hồi
-                        time.sleep(0.05)
+                        time.sleep(0.01)  # Chờ ngắn hơn
 
-                # Cập nhật trạng thái
+                # Cập nhật trạng thái trong luồng UI
                 for response in responses:
                     if "PEN_UP" in response:
-                        self.pen_is_down = False
-                        self.pen_label.configure(text="Nâng")
+                        self.root.after(0, lambda: self._update_pen_status(False))
                     elif "PEN_DOWN" in response:
-                        self.pen_is_down = True
-                        self.pen_label.configure(text="Hạ")
+                        self.root.after(0, lambda: self._update_pen_status(True))
 
                     # Tìm phản hồi về góc
                     match = re.search(r"MOVING_TO:(-?\d+\.?\d*),(-?\d+\.?\d*)", response)
                     if match:
                         theta1 = float(match.group(1))
                         theta2 = float(match.group(2))
-                        self.update_position(theta1, theta2)
-
-                return len(responses) > 0
+                        self.root.after(0, lambda t1=theta1, t2=theta2: self.update_position(t1, t2))
 
         except Exception as e:
-            self.log(f"Lỗi: {str(e)}")
-            return False
+            self.root.after(0, lambda: self.log(f"Lỗi: {str(e)}"))
+
+            # Xử lý lỗi kết nối
+            if "PermissionError" in str(e):
+                self.root.after(0, self.reconnect)
+
+    def _update_pen_status(self, is_down):
+        """Cập nhật trạng thái bút an toàn trong luồng UI"""
+        self.pen_is_down = is_down
+        self.pen_label.configure(text="Hạ" if is_down else "Nâng")
 
     def move_to_xy(self):
         """Di chuyển đến tọa độ XY"""
@@ -685,7 +789,7 @@ class ScaraGUI:
             self.log_text.delete(1.0, 2.0)
 
     def update_canvas(self):
-        """Vẽ lại robot trên canvas"""
+        """Vẽ lại robot trên canvas với sự đảo ngược hoàn toàn để khớp thực tế"""
         # Xóa canvas
         self.canvas.delete("all")
 
@@ -699,40 +803,57 @@ class ScaraGUI:
         cx = canvas_width / 2
         cy = canvas_height / 2
 
-        # Vẽ vùng làm việc
-        bounds = self.robot.workspace_bounds
-        x1 = cx + bounds['left'] * scale
-        y1 = cy - bounds['top'] * scale
-        x2 = cx + bounds['right'] * scale
-        y2 = cy - bounds['bottom'] * scale
-        self.canvas.create_rectangle(x1, y1, x2, y2, outline="lightgray", dash=(2, 2))
+        # --- Vẽ Grid ---
+        grid_spacing = max(5 * scale, 1)
+        for x in range(int(-60 * scale), int(60 * scale), max(int(grid_spacing), 1)):
+            self.canvas.create_line(cx + x, 0, cx + x, canvas_height, fill="#EEEEEE", width=1)
+            if x % max(int(10 * scale), 1) == 0 and x != 0:
+                cm_value = int(x / scale)
+                self.canvas.create_text(cx + x, cy + 10, text=f"{cm_value}", fill="gray", font=("Arial", 8))
+
+        for y in range(int(-60 * scale), int(60 * scale), max(int(grid_spacing), 1)):
+            self.canvas.create_line(0, cy - y, canvas_width, cy - y, fill="#EEEEEE",
+                                    width=1)  # FLIP: cy - y thay vì cy + y
+            if y % max(int(10 * scale), 1) == 0 and y != 0:
+                cm_value = int(y / scale)
+                self.canvas.create_text(cx - 10, cy - y, text=f"{cm_value}", fill="gray",
+                                        font=("Arial", 8))  # FLIP: cy - y
 
         # Vẽ trục tọa độ
-        self.canvas.create_line(cx - 50, cy, cx + 50, cy, fill="lightgray", arrow=tk.LAST)
-        self.canvas.create_line(cx, cy + 50, cx, cy - 50, fill="lightgray", arrow=tk.LAST)
-        self.canvas.create_text(cx + 55, cy, text="X", fill="gray")
-        self.canvas.create_text(cx, cy - 55, text="Y", fill="gray")
+        self.canvas.create_line(0, cy, canvas_width, cy, fill="gray", width=1)
+        self.canvas.create_line(cx, 0, cx, canvas_height, fill="gray", width=1)
+        self.canvas.create_text(cx + 55, cy + 10, text="X", fill="gray")
+        self.canvas.create_text(cx - 10, cy - 55, text="Y", fill="gray")  # FLIP: cy - 55
+
+        # Vẽ vùng làm việc - Flip Y coordinate
+        bounds = self.robot.workspace_bounds
+        x1 = cx + bounds['left'] * scale
+        y1 = cy - bounds['top'] * scale  # FLIP: dùng top thay vì bottom
+        x2 = cx + bounds['right'] * scale
+        y2 = cy - bounds['bottom'] * scale  # FLIP: dùng bottom thay vì top
+        self.canvas.create_rectangle(x1, y1, x2, y2, outline="lightgray", dash=(2, 2))
 
         # Thông số robot
         robot = self.robot.robot_params
 
-        # Vị trí motor
-        motor1_x = cx + robot['x1'] * scale
-        motor1_y = cy - robot['y1'] * scale
-        motor2_x = cx + robot['x5'] * scale
-        motor2_y = cy - robot['y5'] * scale
+        # --- THAY ĐỔI QUAN TRỌNG: Hoán đổi vai trò động cơ ---
+        # Vị trí motor - đổi vị trí để phản ánh đúng chức năng
+        motor_x_x = cx + robot['x5'] * scale  # Motor X (cũ là motor 2/X5)
+        motor_x_y = cy - robot['y5'] * scale
+        motor_y_x = cx + robot['x1'] * scale  # Motor Y (cũ là motor 1/X1)
+        motor_y_y = cy - robot['y1'] * scale
 
         # Vẽ motors
         motor_radius = 6
-        self.canvas.create_oval(motor1_x - motor_radius, motor1_y - motor_radius,
-                                motor1_x + motor_radius, motor1_y + motor_radius,
+        self.canvas.create_oval(motor_x_x - motor_radius, motor_x_y - motor_radius,
+                                motor_x_x + motor_radius, motor_x_y + motor_radius,
                                 fill="blue", outline="black")
-        self.canvas.create_text(motor1_x, motor1_y - 15, text="Motor Y")
+        self.canvas.create_text(motor_x_x, motor_x_y - 15, text="Motor X")
 
-        self.canvas.create_oval(motor2_x - motor_radius, motor2_y - motor_radius,
-                                motor2_x + motor_radius, motor2_y + motor_radius,
+        self.canvas.create_oval(motor_y_x - motor_radius, motor_y_y - motor_radius,
+                                motor_y_x + motor_radius, motor_y_y + motor_radius,
                                 fill="blue", outline="black")
-        self.canvas.create_text(motor2_x, motor2_y - 15, text="Motor X")
+        self.canvas.create_text(motor_y_x, motor_y_y - 15, text="Motor Y")
 
         # Tính vị trí các khớp từ góc hiện tại
         try:
@@ -740,32 +861,36 @@ class ScaraGUI:
             theta2 = self.current_angles['theta2']
             (x2, y2), (x3, y3), (x4, y4) = self.robot.forward_kinematics(theta1, theta2)
 
+            # THAY ĐỔI QUAN TRỌNG: Đảo ngược vai trò của các cánh tay
+            # Trong mô phỏng mới:
+            # - Cánh tay 1 đi từ Motor Y đến khớp 1
+            # - Cánh tay 2 đi từ khớp 1 đến đầu bút
+            # - Cánh tay 3 đi từ đầu bút đến khớp 2
+            # - Cánh tay 4 đi từ khớp 2 đến Motor X
+
             # Chuyển đổi tọa độ
             joint1_x = cx + x2 * scale
-            joint1_y = cy - y2 * scale
+            joint1_y = cy - y2 * scale  # Vẫn giữ hệ tọa độ Y hướng lên
             pen_x = cx + x3 * scale
             pen_y = cy - y3 * scale
             joint2_x = cx + x4 * scale
             joint2_y = cy - y4 * scale
 
-            # Vẽ cánh tay 1
-            self.canvas.create_line(motor1_x, motor1_y, joint1_x, joint1_y, fill="red", width=3)
-
-            # Vẽ cánh tay 2
-            self.canvas.create_line(joint1_x, joint1_y, pen_x, pen_y, fill="green", width=3)
-
-            # Vẽ cánh tay 3
-            self.canvas.create_line(pen_x, pen_y, joint2_x, joint2_y, fill="green", width=3)
-
-            # Vẽ cánh tay 4
-            self.canvas.create_line(joint2_x, joint2_y, motor2_x, motor2_y, fill="red", width=3)
+            # Vẽ cánh tay (1 đến 4)
+            self.canvas.create_line(motor_y_x, motor_y_y, joint1_x, joint1_y, fill="red",
+                                    width=3)  # Cánh tay 1: Motor Y -> khớp 1
+            self.canvas.create_line(joint1_x, joint1_y, pen_x, pen_y, fill="green",
+                                    width=3)  # Cánh tay 2: khớp 1 -> đầu bút
+            self.canvas.create_line(pen_x, pen_y, joint2_x, joint2_y, fill="green",
+                                    width=3)  # Cánh tay 3: đầu bút -> khớp 2
+            self.canvas.create_line(joint2_x, joint2_y, motor_x_x, motor_x_y, fill="red",
+                                    width=3)  # Cánh tay 4: khớp 2 -> Motor X
 
             # Vẽ các khớp
             joint_radius = 4
             self.canvas.create_oval(joint1_x - joint_radius, joint1_y - joint_radius,
                                     joint1_x + joint_radius, joint1_y + joint_radius,
                                     fill="orange")
-
             self.canvas.create_oval(joint2_x - joint_radius, joint2_y - joint_radius,
                                     joint2_x + joint_radius, joint2_y + joint_radius,
                                     fill="orange")
@@ -779,7 +904,7 @@ class ScaraGUI:
             home_x = self.robot.home_position['x']
             home_y = self.robot.home_position['y']
             home_px = cx + home_x * scale
-            home_py = cy - home_y * scale
+            home_py = cy - home_y * scale  # Giữ hệ tọa độ Y hướng lên
             self.canvas.create_text(home_px, home_py, text="H", fill="blue")
             self.canvas.create_oval(home_px - 3, home_py - 3, home_px + 3, home_py + 3,
                                     fill="blue", outline="blue")
@@ -1089,7 +1214,7 @@ class ScaraGUI:
             self.serial = serial.Serial(port, baud, timeout=2)
 
             # Đợi Arduino khởi động lại
-            time.sleep(2.0)
+            time.sleep(3.0)
 
             # Kiểm tra kết nối
             self.serial.write(b"status\n")
