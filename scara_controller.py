@@ -87,7 +87,7 @@ class ScaraRobot:
         return (x2, y2), (x3, y3), (x4, y4)
 
     def inverse_kinematics(self, x3, y3):
-        """Tính toán góc quay của các khớp dựa trên vị trí đầu vẽ"""
+        """Tính toán góc quay của các khớp dựa trên vị trí đầu vẽ - không giới hạn góc"""
         x1 = self.robot_params['x1']
         y1 = self.robot_params['y1']
         x5 = self.robot_params['x5']
@@ -97,19 +97,14 @@ class ScaraRobot:
         L3 = self.robot_params['L3']
         L4 = self.robot_params['L4']
 
-        # Giới hạn góc - mở rộng giới hạn
-        THETA1_MIN, THETA1_MAX = -120, 150  # Mở rộng giới hạn góc động cơ 1
-        THETA2_MIN, THETA2_MAX = 30, 300  # Mở rộng giới hạn góc động cơ 2
-        THETA_DIFF_MAX = 110  # Nới lỏng giới hạn chênh lệch góc
-
         # Tính khoảng cách từ điểm vẽ đến motor
         L13 = np.sqrt((x3 - x1) ** 2 + (y3 - y1) ** 2)
         L53 = np.sqrt((x3 - x5) ** 2 + (y3 - y5) ** 2)
 
-        # Kiểm tra điểm có nằm trong phạm vi không
+        # Kiểm tra khoảng cách có hợp lý không
         if (L13 < abs(L1 - L2) or L13 > L1 + L2 or
                 L53 < abs(L4 - L3) or L53 > L4 + L3):
-            return None, None  # Điểm nằm ngoài phạm vi
+            return None, None  # Điểm nằm ngoài phạm vi khoảng cách
 
         # Tính góc cho motor 1
         alpha_one = np.arccos(np.clip((L1 ** 2 + L13 ** 2 - L2 ** 2) / (2 * L1 * L13), -1, 1))
@@ -127,43 +122,8 @@ class ScaraRobot:
         while theta2 > 180: theta2 -= 360
         while theta2 < -180: theta2 += 360
 
-        # Áp dụng giới hạn góc
-        if (theta1 < THETA1_MIN or theta1 > THETA1_MAX or
-                theta2 < THETA2_MIN or theta2 > THETA2_MAX or
-                abs(theta1 - theta2) > THETA_DIFF_MAX):
-            return None, None  # Góc nằm ngoài giới hạn
-
-        # THAY ĐỔI QUAN TRỌNG: Hoán đổi kết quả theta1 và theta2
-        # và đảo chiều góc nếu cần
-        return {
-            'theta2': math.degrees(theta1),  # Góc 1 điều khiển motor X (trước đây là theta1)
-            'theta1': math.degrees(theta2)  # Góc 2 điều khiển motor Y (trước đây là theta2)
-        }
-
-    def check_point_in_workspace(self, x, y):
-        """Kiểm tra nhanh xem điểm có nằm trong vùng làm việc không"""
-        # Thông số
-        x1, y1 = self.robot_params['x1'], self.robot_params['y1']
-        x5, y5 = self.robot_params['x5'], self.robot_params['y5']
-
-        # Kiểm tra khoảng cách đến động cơ - tính toán nhanh
-        d1_sq = (x - x1) ** 2 + (y - y1) ** 2  # Bình phương khoảng cách đến motor 1
-        d2_sq = (x - x5) ** 2 + (y - y5) ** 2  # Bình phương khoảng cách đến motor 2
-
-        # Kiểm tra điều kiện bán kính - tránh tính căn bậc 2
-        r1_min_sq = self.r1_min ** 2
-        r1_max_sq = self.r1_max ** 2
-        r2_min_sq = self.r2_min ** 2
-        r2_max_sq = self.r2_max ** 2
-
-        # Kiểm tra điều kiện bán kính
-        if (r1_min_sq <= d1_sq <= r1_max_sq and
-                r2_min_sq <= d2_sq <= r2_max_sq):
-            # Chỉ tính động học ngược nếu cần
-            theta1, theta2 = self.inverse_kinematics(x, y)
-            return theta1 is not None and theta2 is not None
-
-        return False
+        # BỎ QUA MỌI KIỂM TRA GIỚI HẠN GÓC
+        return theta1, theta2
 
 class ScaraGUI:
     def __init__(self, root):
@@ -698,19 +658,29 @@ class ScaraGUI:
             return
 
         try:
-            theta1 = float(self.angle1_entry.get())
-            theta2 = float(self.angle2_entry.get())
+            theta1 = float(self.angle1_entry.get())  # Góc 1 - mong muốn điều khiển X
+            theta2 = float(self.angle2_entry.get())  # Góc 2 - mong muốn điều khiển Y
 
-            # Sử dụng phương thức mới để gửi lệnh
-            if self.send_move_command(theta1, theta2):
-                # Cập nhật vị trí (vẫn giữ góc gốc cho mô phỏng)
-                self.update_position(theta1, theta2)
+            # ===== CHÚ Ý: ĐIỂM QUAN TRỌNG =====
+            # Arduino nhận lệnh theo định dạng: "X_angle,Y_angle"
+            # Do đó gửi: theta1 (góc X), theta2 (góc Y)
+            command = f"{theta1:.2f},{theta2:.2f}"
+
+            # Log chi tiết để debug
+            self.log(f"Góc vào: θ1(X)={theta1:.2f}, θ2(Y)={theta2:.2f}")
+            self.log(f"Gửi lệnh: {command}")
+
+            # Gửi lệnh
+            self.send_command(command)
+
+            # Cập nhật vị trí
+            self.update_position(theta1, theta2)
 
         except ValueError:
             messagebox.showerror("Lỗi", "Giá trị góc không hợp lệ!")
 
     def move_to_xy(self):
-        """Di chuyển đến tọa độ XY"""
+        """Di chuyển đến tọa độ XY không kiểm tra vùng làm việc"""
         if not self.is_connected:
             messagebox.showwarning("Cảnh báo", "Vui lòng kết nối với Arduino!")
             return
@@ -719,28 +689,32 @@ class ScaraGUI:
             x = float(self.x_entry.get())
             y = float(self.y_entry.get())
 
-            # Kiểm tra vùng làm việc
-            if not self.robot.check_point_in_workspace(x, y):
-                messagebox.showwarning("Cảnh báo", f"Vị trí ({x}, {y}) nằm ngoài vùng làm việc!")
-                return
-
-            # Tính góc
+            # Tính góc - bỏ qua kiểm tra vùng làm việc
             theta1, theta2 = self.robot.inverse_kinematics(x, y)
+
+            # Nếu không tính được góc, báo lỗi nhưng không ngăn chặn
             if theta1 is None or theta2 is None:
-                messagebox.showwarning("Cảnh báo", f"Không thể tính góc cho vị trí ({x}, {y})!")
+                self.log(f"Cảnh báo: Không tính được góc cho ({x}, {y}), nhưng vẫn tiếp tục...")
                 return
 
-            # Cập nhật giá trị cho góc
-            self.angle1_entry.delete(0, tk.END)
-            self.angle1_entry.insert(0, f"{theta1:.2f}")
-            self.angle2_entry.delete(0, tk.END)
-            self.angle2_entry.insert(0, f"{theta2:.2f}")
+            # Đổi thứ tự theta cho đúng với X, Y
+            theta_x = theta2  # Góc X = theta2 (từ IK)
+            theta_y = theta1  # Góc Y = theta1 (từ IK)
 
-            # Sử dụng phương thức mới để gửi lệnh
-            if self.send_move_command(theta1, theta2):
-                # Cập nhật mô phỏng với góc gốc
-                self.current_position = {'x': x, 'y': y}
-                self.update_position(theta1, theta2)
+            # Cập nhật giá trị cho góc (đã đổi thứ tự)
+            self.angle1_entry.delete(0, tk.END)
+            self.angle1_entry.insert(0, f"{theta_x:.2f}")  # Góc 1 = X
+            self.angle2_entry.delete(0, tk.END)
+            self.angle2_entry.insert(0, f"{theta_y:.2f}")  # Góc 2 = Y
+
+            # Gửi lệnh với góc phù hợp với Arduino
+            command = f"{theta_x:.2f},{theta_y:.2f}"
+            self.log(f"Gửi lệnh: {command}")
+            self.send_command(command)
+
+            # Cập nhật vị trí (giữ theta1,theta2 gốc cho mô phỏng)
+            self.current_position = {'x': x, 'y': y}
+            self.update_position(theta1, theta2)
 
         except ValueError:
             messagebox.showerror("Lỗi", "Giá trị tọa độ không hợp lệ!")
@@ -1216,8 +1190,7 @@ class ScaraGUI:
 
         for x in x_range:
             for y in y_range:
-                if self.check_point_in_workspace(x, y):
-                    points.append((x, y))
+                points.append((x, y))
 
         return points
     # Trong ScaraGUI, thêm nút hiển thị vùng làm việc:
