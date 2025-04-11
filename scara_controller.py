@@ -1118,8 +1118,11 @@ class ScaraGUI:
         self.log("Bắt đầu xử lý G-code")
 
     def process_gcode(self):
-        """Thread xử lý G-code - phiên bản cải tiến"""
+        """Thread xử lý G-code - chuyển đổi từ tọa độ Cartesian sang góc"""
         try:
+            # Gửi tín hiệu bắt đầu G-code
+            self.send_command("gstart")
+
             while self.gcode_line_num < self.gcode_total_lines and self.gcode_running:
                 # Kiểm tra tạm dừng
                 if self.gcode_paused:
@@ -1134,67 +1137,116 @@ class ScaraGUI:
                     # Highlight dòng hiện tại
                     self.highlight_current_line(self.gcode_line_num)
 
-                    # === XỬ LÝ G-CODE TRÊN PYTHON TRƯỚC KHI GỬI ĐẾN ARDUINO ===
-                    try:
-                        # Phân tích G-code
-                        if any(line.upper().startswith(cmd) for cmd in ["G0", "G1", "G00", "G01"]):
-                            # Phân tích tọa độ X, Y từ G-code
-                            x, y = None, None
-                            parts = line.upper().split()
-                            for part in parts:
-                                if part.startswith('X'):
-                                    try:
-                                        x = float(part[1:])
-                                    except ValueError:
-                                        pass
-                                elif part.startswith('Y'):
-                                    try:
-                                        y = float(part[1:])
-                                    except ValueError:
-                                        pass
+                    # === XỬ LÝ G-CODE ===
+                    if line.upper().startswith(("G0", "G1", "G00", "G01")):
+                        # Phân tích tọa độ X, Y từ G-code (coi đây là tọa độ Cartesian)
+                        x_cart, y_cart = None, None
+                        parts = line.upper().split()
 
-                            # Nếu có tọa độ X, Y hợp lệ
-                            if x is not None and y is not None:
-                                self.log(f"G-code: Đang di chuyển đến X={x}, Y={y}")
+                        # Tách G0/G1 và các tham số
+                        gcode_type = parts[0]
+                        other_params = []
 
-                                # Tính góc bằng inverse kinematics và di chuyển
-                                theta1, theta2, new_config = self.robot.inverse_kinematics(x, y, self.current_config)
+                        for part in parts[1:]:
+                            if part.startswith('X'):
+                                try:
+                                    x_cart = float(part[1:])
+                                except ValueError:
+                                    pass
+                            elif part.startswith('Y'):
+                                try:
+                                    y_cart = float(part[1:])
+                                except ValueError:
+                                    pass
+                            else:
+                                other_params.append(part)  # Giữ lại các tham số khác như Z, F
+
+                        # Nếu có tọa độ X, Y Cartesian hợp lệ
+                        if x_cart is not None and y_cart is not None:
+                            self.log(f"Tọa độ Cartesian: X={x_cart}, Y={y_cart}")
+
+                            # Tính góc bằng inverse kinematics
+                            try:
+                                result = self.robot.inverse_kinematics(x_cart, y_cart)
+
+                                # Xử lý kết quả dựa vào số lượng giá trị trả về
+                                if isinstance(result, tuple):
+                                    if len(result) == 2:
+                                        theta1, theta2 = result
+                                    elif len(result) == 3:
+                                        theta1, theta2, _ = result
+                                    else:
+                                        self.log(f"Lỗi: Kết quả inverse_kinematics không hợp lệ")
+                                        continue
+                                else:
+                                    self.log(f"Lỗi: Kết quả inverse_kinematics không phải tuple")
+                                    continue
 
                                 if theta1 is not None and theta2 is not None:
-                                    self.current_config = new_config
-                                    # Gửi góc trực tiếp đến Arduino
-                                    self.send_command(f"{theta1:.2f},{theta2:.2f}")
-                                else:
-                                    self.log(f"Lỗi: Không thể tính góc cho vị trí X={x}, Y={y}")
-                                    # Tạm dừng nếu gặp lỗi
-                                    self.gcode_paused = True
-                                    self.root.after(0, lambda: self.pause_btn.config(text="Tiếp tục"))
-                                    return
-                            else:
-                                # Gửi lệnh G-code nguyên dạng nếu không phải lệnh di chuyển XY
-                                self.send_command(line)
-                        else:
-                            # Gửi lệnh G-code nguyên dạng cho các lệnh khác
-                            self.send_command(line)
+                                    # Tạo lệnh G-code mới với góc thay vì tọa độ Cartesian
+                                    new_gcode = f"{gcode_type} X{theta1:.2f} Y{theta2:.2f}"
 
-                    except Exception as e:
-                        self.log(f"Lỗi xử lý G-code: {str(e)}")
-                        self.gcode_paused = True
-                        self.root.after(0, lambda: self.pause_btn.config(text="Tiếp tục"))
-                        return
+                                    # Thêm các tham số khác vào lệnh
+                                    if other_params:
+                                        new_gcode += " " + " ".join(other_params)
+
+                                    self.log(f"Chuyển đổi thành lệnh góc: {new_gcode}")
+
+                                    # Gửi lệnh G-code mới với góc
+                                    cmd = new_gcode + '\n'
+                                    self.serial.write(cmd.encode('utf-8'))
+
+                                    # Đọc phản hồi
+                                    time.sleep(0.5)
+                                    while self.serial.in_waiting > 0:
+                                        response = self.serial.readline().decode('utf-8', errors='ignore').strip()
+                                        if response:
+                                            self.log(f"Nhận: {response}")
+                                else:
+                                    self.log(f"Lỗi: Không thể tính góc cho vị trí X={x_cart}, Y={y_cart}")
+                                    self.log(f"Điểm có thể nằm ngoài vùng làm việc của robot")
+                                    self.gcode_paused = True
+                                    self.pause_btn.config(text="Tiếp tục")
+                                    return
+                            except Exception as e:
+                                self.log(f"Lỗi tính toán inverse kinematics: {str(e)}")
+                                continue
+                        else:
+                            # Gửi lệnh nguyên mẫu nếu không có X,Y
+                            cmd = line + '\n'
+                            self.serial.write(cmd.encode('utf-8'))
+                            time.sleep(0.5)
+
+                            while self.serial.in_waiting > 0:
+                                response = self.serial.readline().decode('utf-8', errors='ignore').strip()
+                                if response:
+                                    self.log(f"Nhận: {response}")
+                    else:
+                        # Gửi các lệnh G-code khác nguyên mẫu
+                        cmd = line + '\n'
+                        self.serial.write(cmd.encode('utf-8'))
+                        time.sleep(0.5)
+
+                        while self.serial.in_waiting > 0:
+                            response = self.serial.readline().decode('utf-8', errors='ignore').strip()
+                            if response:
+                                self.log(f"Nhận: {response}")
 
                 # Tăng dòng và cập nhật tiến trình
                 self.gcode_line_num += 1
                 progress = int(100 * self.gcode_line_num / self.gcode_total_lines)
-                self.root.after(0, lambda p=progress: self.update_progress(p))
+                self.progress_var.set(progress)
+                self.progress_label.config(text=f"{progress}% hoàn thành")
 
             # Hoàn thành
             if self.gcode_running:
-                self.root.after(0, self.complete_gcode)
+                self.send_command("gend")
+                self.complete_gcode()
 
         except Exception as e:
-            self.root.after(0, lambda: self.log(f"Lỗi xử lý G-code: {str(e)}"))
-            self.root.after(0, self.stop_gcode)
+            self.log(f"Lỗi xử lý G-code: {str(e)}")
+            self.send_command("gend")
+            self.stop_gcode()
 
     def highlight_current_line(self, line_num):
         """Highlight dòng G-code hiện tại"""
