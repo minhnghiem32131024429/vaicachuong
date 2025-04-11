@@ -18,20 +18,30 @@ from matplotlib.patches import Rectangle, Circle, FancyArrowPatch
 class ScaraRobot:
     def __init__(self):
         self.robot_params = {
-            'x1': 0.0,  # Tọa độ X motor 1 (motor Y)
-            'y1': 0.0,  # Tọa độ Y motor 1
-            'x5': -20.0,  # Tọa độ X motor 2 (motor X)
-            'y5': 0.0,  # Tọa độ Y motor 2 - This line was missing!
-            'L1': 15.0,  # Chiều dài cánh tay 1 từ motor 1
-            'L2': 25.0,  # Chiều dài cánh tay 2 từ joint 1 đến đầu vẽ
-            'L3': 25.0,  # Chiều dài cánh tay 3 từ đầu vẽ đến joint 2
-            'L4': 15.0,  # Chiều dài cánh tay 4 từ joint 2 đến motor 2
+            'x1': -10.0,  # Động cơ Y - Điều chỉnh vị trí đối xứng
+            'y1': 0.0,
+            'x5': 10.0,  # Động cơ X - Điều chỉnh vị trí đối xứng
+            'y5': 0.0,
+            'L1': 15.0,  # Chiều dài các cánh tay
+            'L2': 25.0,
+            'L3': 25.0,
+            'L4': 15.0,
+            'reach_radius1': 40.0,  # Tầm với từ động cơ Y (L1+L2)
+            'reach_radius2': 40.0  # Tầm với từ động cơ X (L3+L4)
         }
-        self.home_position = {'x': -10.0, 'y': 38.0}  # Vị trí home
-        self.calculate_workspace()
+
+        # Vùng làm việc cố định - không cần tính lại
+        self.workspace_bounds = {
+            'left': -20.0,
+            'right': 0.0,
+            'bottom': 15.0,
+            'top': 35.0
+        }
+
+        self.home_position = {'x': -10.0, 'y': 33.0}  # Vị trí home
 
     def calculate_workspace(self):
-        """Tính vùng làm việc chính xác hơn với xem xét cẩn thận khu vực Y âm"""
+        """Tính vùng làm việc cân đối cho cả hai động cơ"""
         # Thông số
         x1, y1 = self.robot_params['x1'], self.robot_params['y1']
         x5, y5 = self.robot_params['x5'], self.robot_params['y5']
@@ -46,12 +56,15 @@ class ScaraRobot:
         self.r2_min = max(0, abs(L4 - L3)) + 0.5
         self.r2_max = (L4 + L3) - 0.5
 
-        # Tính hình chữ nhật bao quanh khu vực làm việc - mở rộng vùng Y âm
+        # Tính hình chữ nhật bao quanh khu vực làm việc - cân đối cho cả hai bên
+        max_radius = max(self.r1_max, self.r2_max)
+
+        # Đảm bảo kích thước hai bên bằng nhau
         self.workspace_bounds = {
-            'left': min(x1 - self.r1_max, x5 - self.r2_max),
-            'right': max(x1 + self.r1_max, x5 + self.r2_max),
-            'bottom': min(y1 - self.r1_max * 0.7, y5 - self.r2_max * 0.7),  # Mở rộng xuống dưới
-            'top': max(y1 + self.r1_max, y5 + self.r2_max)
+            'left': min(x1 - max_radius, x5 - max_radius),
+            'right': max(x1 + max_radius, x5 + max_radius),
+            'bottom': min(y1 - max_radius, y5 - max_radius),  # Đã loại bỏ hệ số 0.7
+            'top': max(y1 + max_radius, y5 + max_radius)
         }
 
         # Log thông tin về workspace
@@ -194,43 +207,31 @@ class ScaraRobot:
         return theta1, theta2, config
 
     def check_point_in_workspace(self, x, y):
-        """Kiểm tra chính xác hơn xem điểm có nằm trong vùng làm việc không"""
-        # Lấy thông số
-        x1, y1 = self.robot_params['x1'], self.robot_params['y1']
-        x5, y5 = self.robot_params['x5'], self.robot_params['y5']
+        """Kiểm tra xem điểm có nằm trong phạm vi làm việc cố định không"""
+        bounds = self.workspace_bounds
 
-        # Kiểm tra khoảng cách đến động cơ
-        d1 = np.sqrt((x - x1) ** 2 + (y - y1) ** 2)
-        d2 = np.sqrt((x - x5) ** 2 + (y - y5) ** 2)
-
-        # Kiểm tra điều kiện bán kính
-        if not (self.r1_min <= d1 <= self.r1_max and self.r2_min <= d2 <= self.r2_max):
-            return False
-
-        # Nếu thỏa mãn điều kiện bán kính, kiểm tra xem có giải pháp động học ngược không
-        theta1, theta2, _ = self.inverse_kinematics(x, y)
-        return theta1 is not None and theta2 is not None
+        # Kiểm tra điểm có nằm trong hình chữ nhật phạm vi làm việc không
+        return (bounds['left'] <= x <= bounds['right'] and
+                bounds['bottom'] <= y <= bounds['top'])
 
     def create_workspace_visualization(self):
-        """Tạo dữ liệu trực quan hóa vùng làm việc chính xác hơn"""
+        """Tạo điểm trực quan cho vùng làm việc cố định"""
         points = []
-        resolution = 0.5  # Tăng độ phân giải (giảm khoảng cách giữa các điểm kiểm tra)
+        resolution = 0.2  # Độ phân giải cao hơn
 
-        # Sử dụng giới hạn rộng hơn một chút để đảm bảo bao phủ toàn bộ không gian
-        padding = 5.0
-        bounds = {
-            'left': self.workspace_bounds['left'] - padding,
-            'right': self.workspace_bounds['right'] + padding,
-            'bottom': self.workspace_bounds['bottom'] - padding,
-            'top': self.workspace_bounds['top'] + padding
-        }
+        # Sử dụng các điểm trong phạm vi cố định
+        x_min = self.workspace_bounds['left']
+        x_max = self.workspace_bounds['right']
+        y_min = self.workspace_bounds['bottom']
+        y_max = self.workspace_bounds['top']
 
-        # Duyệt qua lưới điểm và kiểm tra từng điểm
-        x_range = np.arange(bounds['left'], bounds['right'] + resolution, resolution)
-        y_range = np.arange(bounds['bottom'], bounds['top'] + resolution, resolution)
+        # Tạo lưới điểm tại khu vực vùng làm việc
+        x_range = np.arange(x_min, x_max + resolution, resolution)
+        y_range = np.arange(y_min, y_max + resolution, resolution)
 
         for x in x_range:
             for y in y_range:
+                # Kiểm tra nếu điểm nằm trong vùng làm việc cố định
                 if self.check_point_in_workspace(x, y):
                     points.append((x, y))
 
@@ -532,29 +533,22 @@ class ScaraGUI:
         self.robot_parts = []
 
         # Lấy bounds từ vùng làm việc
-        bounds = self.robot.workspace_bounds
+        bounds = self.workspace_bounds
 
-        # Thiết lập giới hạn trục
-        self.ax.set_xlim(bounds['left'] - 10, bounds['right'] + 10)
-        self.ax.set_ylim(bounds['bottom'] - 10, bounds['top'] + 10)
-        self.ax.set_xlabel("X (cm)")
-        self.ax.set_ylabel("Y (cm)")
-        self.ax.set_title("SCARA Robot Visualization")
-        self.ax.grid(True)
+        # Vẽ hai vòng tròn thể hiện phạm vi từ hai động cơ
+        reach_circle1 = plt.Circle((self.robot_params['x1'], self.robot_params['y1']),
+                                   self.robot_params['reach_radius1'],
+                                   fill=False, color='blue', alpha=0.2, linestyle='--')
+        reach_circle2 = plt.Circle((self.robot_params['x5'], self.robot_params['y5']),
+                                   self.robot_params['reach_radius2'],
+                                   fill=False, color='blue', alpha=0.2, linestyle='--')
+        self.ax.add_patch(reach_circle1)
+        self.ax.add_patch(reach_circle2)
 
-        # Robot parameters
-        x1 = self.robot.robot_params['x1']
-        y1 = self.robot.robot_params['y1']
-        x5 = self.robot.robot_params['x5']
-        y5 = self.robot.robot_params['y5']
-        L1 = self.robot.robot_params['L1']
-        L4 = self.robot.robot_params['L4']
-
-        # Vùng làm việc
-        rect_width = bounds['right'] - bounds['left']
-        rect_height = bounds['top'] - bounds['bottom']
+        # Vẽ hình chữ nhật thể hiện vùng làm việc cố định
         workspace_rect = Rectangle((bounds['left'], bounds['bottom']),
-                                   rect_width, rect_height,
+                                   bounds['right'] - bounds['left'],
+                                   bounds['top'] - bounds['bottom'],
                                    linewidth=2, edgecolor='g', facecolor='none', alpha=0.7)
         self.ax.add_patch(workspace_rect)
 
