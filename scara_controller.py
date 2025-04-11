@@ -31,6 +31,7 @@ class ScaraRobot:
         self.calculate_workspace()
 
     def calculate_workspace(self):
+        """Tính vùng làm việc chính xác hơn với xem xét cẩn thận khu vực Y âm"""
         # Thông số
         x1, y1 = self.robot_params['x1'], self.robot_params['y1']
         x5, y5 = self.robot_params['x5'], self.robot_params['y5']
@@ -45,13 +46,19 @@ class ScaraRobot:
         self.r2_min = max(0, abs(L4 - L3)) + 0.5
         self.r2_max = (L4 + L3) - 0.5
 
-        # Tính hình chữ nhật bao quanh khu vực làm việc
+        # Tính hình chữ nhật bao quanh khu vực làm việc - mở rộng vùng Y âm
         self.workspace_bounds = {
             'left': min(x1 - self.r1_max, x5 - self.r2_max),
             'right': max(x1 + self.r1_max, x5 + self.r2_max),
-            'bottom': min(y1 - self.r1_max, y5 - self.r2_max),
+            'bottom': min(y1 - self.r1_max * 0.7, y5 - self.r2_max * 0.7),  # Mở rộng xuống dưới
             'top': max(y1 + self.r1_max, y5 + self.r2_max)
         }
+
+        # Log thông tin về workspace
+        print(f"Vùng làm việc: X={self.workspace_bounds['left']:.1f} đến {self.workspace_bounds['right']:.1f}, "
+              f"Y={self.workspace_bounds['bottom']:.1f} đến {self.workspace_bounds['top']:.1f}")
+        print(f"Bán kính từ motor 1: {self.r1_min:.1f} đến {self.r1_max:.1f}")
+        print(f"Bán kính từ motor 2: {self.r2_min:.1f} đến {self.r2_max:.1f}")
 
     def forward_kinematics(self, theta1, theta2):
         x1 = self.robot_params['x1']
@@ -149,6 +156,7 @@ class ScaraRobot:
         theta2_elbow_up = normalize_angle(theta2_elbow_up)
 
         # Kiểm tra các giải pháp có thỏa mãn giới hạn góc không
+        # Thay đổi: Thử cả hai cấu hình và chọn giải pháp tốt nhất
         solutions = []
 
         # Kiểm tra cấu hình khuỷu xuống
@@ -164,42 +172,60 @@ class ScaraRobot:
         if not solutions:
             return None, None, None
 
-        # Chọn giải pháp phù hợp
+        # Ưu tiên giải pháp gần với cấu hình hiện tại
         if current_config is not None and len(solutions) > 1:
             for config, theta1, theta2 in solutions:
                 if config == current_config:
                     return theta1, theta2, config
 
-        # Nếu không có cấu hình hiện tại hoặc không thể giữ nguyên cấu hình
+        # Đặc biệt ưu tiên giải pháp cho Y âm khi cần thiết
+        if y3 < 0 and len(solutions) > 1:
+            # Tìm giải pháp tốt nhất cho Y âm
+            best_solution = solutions[0]
+            for solution in solutions:
+                config, theta1, theta2 = solution
+                if (config == "elbow_up" and y3 < -5) or (config == "elbow_down" and y3 > -5):
+                    best_solution = solution
+                    break
+            return best_solution[1], best_solution[2], best_solution[0]
+
+        # Nếu không có ưu tiên đặc biệt, lấy giải pháp đầu tiên
         config, theta1, theta2 = solutions[0]
         return theta1, theta2, config
 
     def check_point_in_workspace(self, x, y):
+        """Kiểm tra chính xác hơn xem điểm có nằm trong vùng làm việc không"""
+        # Lấy thông số
         x1, y1 = self.robot_params['x1'], self.robot_params['y1']
         x5, y5 = self.robot_params['x5'], self.robot_params['y5']
 
         # Kiểm tra khoảng cách đến động cơ
-        d1_sq = (x - x1) ** 2 + (y - y1) ** 2
-        d2_sq = (x - x5) ** 2 + (y - y5) ** 2
+        d1 = np.sqrt((x - x1) ** 2 + (y - y1) ** 2)
+        d2 = np.sqrt((x - x5) ** 2 + (y - y5) ** 2)
 
         # Kiểm tra điều kiện bán kính
-        r1_min_sq = self.r1_min ** 2
-        r1_max_sq = self.r1_max ** 2
-        r2_min_sq = self.r2_min ** 2
-        r2_max_sq = self.r2_max ** 2
+        if not (self.r1_min <= d1 <= self.r1_max and self.r2_min <= d2 <= self.r2_max):
+            return False
 
-        if (r1_min_sq <= d1_sq <= r1_max_sq and r2_min_sq <= d2_sq <= r2_max_sq):
-            # Chỉ tính động học ngược nếu cần
-            theta1, theta2, _ = self.inverse_kinematics(x, y)
-            return theta1 is not None and theta2 is not None
-
-        return False
+        # Nếu thỏa mãn điều kiện bán kính, kiểm tra xem có giải pháp động học ngược không
+        theta1, theta2, _ = self.inverse_kinematics(x, y)
+        return theta1 is not None and theta2 is not None
 
     def create_workspace_visualization(self):
+        """Tạo dữ liệu trực quan hóa vùng làm việc chính xác hơn"""
         points = []
-        resolution = 1.0  # cm
+        resolution = 0.5  # Tăng độ phân giải (giảm khoảng cách giữa các điểm kiểm tra)
 
-        bounds = self.workspace_bounds
+        # Sử dụng giới hạn rộng hơn một chút để đảm bảo bao phủ toàn bộ không gian
+        padding = 5.0
+        bounds = {
+            'left': self.workspace_bounds['left'] - padding,
+            'right': self.workspace_bounds['right'] + padding,
+            'bottom': self.workspace_bounds['bottom'] - padding,
+            'top': self.workspace_bounds['top'] + padding
+        }
+
+        # Duyệt qua lưới điểm và kiểm tra từng điểm
         x_range = np.arange(bounds['left'], bounds['right'] + resolution, resolution)
         y_range = np.arange(bounds['bottom'], bounds['top'] + resolution, resolution)
 
@@ -225,6 +251,8 @@ class ScaraGUI:
         self.current_angles = {'theta1': 0.0, 'theta2': 0.0}
         self.current_position = {'x': 0.0, 'y': 0.0}
         self.pen_is_down = False
+
+        self.gcode_delay = 0.5  # Mặc định 0.5 giây
 
         # Animation variables
         self.animation = None
@@ -440,6 +468,17 @@ class ScaraGUI:
         self.progress_label = ttk.Label(gcode_frame, text="0% hoàn thành")
         self.progress_label.pack(pady=2)
 
+        delay_frame = ttk.Frame(gcode_frame)
+        delay_frame.pack(fill=tk.X, pady=5)
+
+        ttk.Label(delay_frame, text="Thời gian chờ giữa các lệnh (giây):").pack(side=tk.LEFT, padx=5)
+        self.delay_var = tk.StringVar(value="0.5")
+        delay_entry = ttk.Entry(delay_frame, textvariable=self.delay_var, width=5)
+        delay_entry.pack(side=tk.LEFT, padx=5)
+
+        apply_btn = ttk.Button(delay_frame, text="Áp dụng", command=self.apply_delay)
+        apply_btn.pack(side=tk.LEFT, padx=5)
+
         # Panel thông báo
         log_frame = ttk.LabelFrame(control_frame, text="Nhật ký", padding=5)
         log_frame.pack(fill=tk.BOTH, expand=True, pady=5)
@@ -624,6 +663,18 @@ class ScaraGUI:
 
         except Exception as e:
             self.log(f"Lỗi cập nhật animation: {str(e)}")
+
+    def apply_delay(self):
+        """Áp dụng thời gian chờ giữa các lệnh G-code"""
+        try:
+            delay = float(self.delay_var.get())
+            if delay >= 0:
+                self.gcode_delay = delay
+                self.log(f"Đã thiết lập thời gian chờ giữa các lệnh: {delay} giây")
+            else:
+                messagebox.showwarning("Cảnh báo", "Thời gian chờ không thể âm!")
+        except ValueError:
+            messagebox.showerror("Lỗi", "Giá trị thời gian không hợp lệ!")
 
     def update_ports(self):
         """Cập nhật danh sách cổng COM"""
@@ -1071,7 +1122,7 @@ class ScaraGUI:
                 self.root.after(0, lambda p=progress: self.update_progress(p))
 
                 # Đợi một chút giữa các lệnh
-                time.sleep(0.2)
+                time.sleep(self.gcode_delay)
 
             # Hoàn thành
             if self.gcode_running:
