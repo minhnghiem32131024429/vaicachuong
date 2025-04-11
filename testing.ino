@@ -3,7 +3,7 @@
 
 // --- Định nghĩa hướng quay ---
 #define X_DIRECTION 1    // 1: chiều thuận, -1: chiều ngược
-#define Y_DIRECTION 1    // Đổi thành -1 nếu trục Y quay ngược
+#define Y_DIRECTION 1    // 1: chiều thuận, -1: chiều ngược
 
 // --- Chân kết nối ---
 #define ENABLE_PIN   8
@@ -13,10 +13,10 @@
 #define Y_DIR_PIN    6
 #define SERVO_PIN    12  
 
-// --- Thông số động cơ - Đã giảm tốc độ để ổn định ---
+// --- Thông số động cơ ---
 #define STEPS_PER_DEG 0.56      // 200 bước/vòng với 1.8° và microstepping 1/1
-#define DEFAULT_SPEED 800       // Giảm tốc độ từ 1200 xuống 800
-#define DEFAULT_ACCEL 300       // Giảm gia tốc từ 500 xuống 300
+#define DEFAULT_SPEED 800       // Tốc độ mặc định
+#define DEFAULT_ACCEL 300       // Gia tốc mặc định
 
 // --- Thông số Servo ---
 #define PEN_UP_ANGLE   90
@@ -30,12 +30,40 @@ bool isProcessingGcode = false;
 bool commandCompleted = true;
 bool absolutePositioning = true;
 unsigned long lastCommandTime = 0;
-#define WATCHDOG_TIMEOUT 10000  // 10 giây
+#define WATCHDOG_TIMEOUT 5000  // 5 giây
 
+// --- Khởi tạo đối tượng ---
 Servo penServo;
 AccelStepper stepperX(AccelStepper::DRIVER, X_STEP_PIN, X_DIR_PIN);
 AccelStepper stepperY(AccelStepper::DRIVER, Y_STEP_PIN, Y_DIR_PIN);
 enum Mode { IDLE, MOVE, HOME, TEST } mode = IDLE;
+
+// --- Hàm kiểm tra giới hạn góc ---
+bool checkAngleLimits(float theta1, float theta2) {
+  // Giới hạn góc - phải khớp với Python
+  const float THETA1_MIN = -120, THETA1_MAX = 150; 
+  const float THETA2_MIN = 30, THETA2_MAX = 300;
+  
+  if (theta1 < THETA1_MIN || theta1 > THETA1_MAX) {
+    Serial.print(F("ERROR:Angle1 out of range ("));
+    Serial.print(THETA1_MIN);
+    Serial.print(F(" to "));
+    Serial.print(THETA1_MAX);
+    Serial.println(F(")"));
+    return false;
+  }
+  
+  if (theta2 < THETA2_MIN || theta2 > THETA2_MAX) {
+    Serial.print(F("ERROR:Angle2 out of range ("));
+    Serial.print(THETA2_MIN);
+    Serial.print(F(" to "));
+    Serial.print(THETA2_MAX);
+    Serial.println(F(")"));
+    return false;
+  }
+  
+  return true;
+}
 
 // --- Hàm di chuyển tối ưu với hỗ trợ hướng ---
 void moveToAngle(AccelStepper &stepper, float targetAngle, int direction = 1) {
@@ -53,16 +81,95 @@ void moveToAngle(AccelStepper &stepper, float targetAngle, int direction = 1) {
     diff += fullRotation;
   }
   
-  // In debug log
-  Serial.print(F("DEBUG: Moving from steps:"));
-  Serial.print(currentSteps);
-  Serial.print(F(" to steps:"));
-  Serial.print(targetSteps);
-  Serial.print(F(" diff:"));
-  Serial.println(diff);
-  
   // Di chuyển tương đối
   stepper.move(diff);
+}
+
+// --- Hàm kích hoạt động cơ ---
+void enableMotors(bool enabled = true) {
+  pinMode(ENABLE_PIN, OUTPUT);
+  digitalWrite(ENABLE_PIN, !enabled);  // LOW = enabled, HIGH = disabled
+  if (enabled) {
+    Serial.println(F("MOTORS_ENABLED"));
+  } else {
+    Serial.println(F("MOTORS_DISABLED"));
+  }
+}
+
+// --- Hàm điều khiển bút cải tiến ---
+void penDown() {
+  Serial.println(F("Starting pen down..."));
+  
+  // Không tắt động cơ bước khi điều khiển servo để tránh mất vị trí
+  // Thay vào đó, di chuyển servo từ từ với bước nhỏ
+  int currentPos = penServo.read();
+  
+  if (currentPos > PEN_DOWN_ANGLE) {
+    for (int angle = currentPos; angle > PEN_DOWN_ANGLE; angle -= 2) {
+      penServo.write(angle);
+      delay(15);  // Đợi 15ms giữa các bước - nhẹ nhàng hơn
+    }
+  }
+  
+  penServo.write(PEN_DOWN_ANGLE);
+  delay(50);  // Đợi servo ổn định
+  
+  isPenDown = true;
+  Serial.println(F("PEN_DOWN"));
+  Serial.println(F("OK"));
+}
+
+void penUp() {
+  Serial.println(F("Starting pen up..."));
+  
+  int currentPos = penServo.read();
+  
+  if (currentPos < PEN_UP_ANGLE) {
+    for (int angle = currentPos; angle < PEN_UP_ANGLE; angle += 2) {
+      penServo.write(angle);
+      delay(15);
+    }
+  }
+  
+  penServo.write(PEN_UP_ANGLE);
+  delay(50);
+  
+  isPenDown = false;
+  Serial.println(F("PEN_UP"));
+  Serial.println(F("OK"));
+}
+
+// --- Chức năng hiệu chuẩn ---
+void calibratePosition() {
+  stepperX.setCurrentPosition((long)(90 * STEPS_PER_DEG * X_DIRECTION));
+  stepperY.setCurrentPosition((long)(90 * STEPS_PER_DEG * Y_DIRECTION));
+  currentX = 90.0;
+  currentY = 90.0;
+  
+  Serial.println(F("CALIBRATED_TO_90_90"));
+}
+
+// --- Hàm home với kiểm tra vị trí hiện tại ---
+void homePosition() {
+  enableMotors();
+  mode = HOME;
+  commandCompleted = false;
+  
+  // Lấy vị trí hiện tại (góc)
+  long currentPosX = stepperX.currentPosition();
+  long currentPosY = stepperY.currentPosition();
+  float currentAngX = currentPosX / (STEPS_PER_DEG * X_DIRECTION);
+  float currentAngY = currentPosY / (STEPS_PER_DEG * Y_DIRECTION);
+  
+  // Kiểm tra nếu đã ở gần vị trí home
+  if (abs(currentAngX - 90) < 2 && abs(currentAngY - 90) < 2) {
+    Serial.println(F("ALREADY_AT_HOME"));
+    commandCompleted = true;
+  } else {
+    moveToAngle(stepperX, 90, X_DIRECTION);
+    moveToAngle(stepperY, 90, Y_DIRECTION);
+    Serial.println(F("HOMING"));
+  }
 }
 
 // --- Hàm kiểm tra động cơ ---
@@ -108,126 +215,6 @@ void testSteppers() {
   Serial.println(F("Motors test complete"));
 }
 
-// --- Hàm kích hoạt động cơ ---
-void enableMotors() {
-  pinMode(ENABLE_PIN, OUTPUT);
-  digitalWrite(ENABLE_PIN, LOW);
-  Serial.println(F("MOTORS_ENABLED"));
-}
-
-void disableMotors() {
-  digitalWrite(ENABLE_PIN, HIGH);
-  Serial.println(F("MOTORS_DISABLED"));
-}
-
-// --- Hàm điều khiển bút cải tiến ---
-// Thay thế hàm penDown() bằng phiên bản di chuyển nhẹ nhàng hơn
-void penDown() {
-  // In debug nhưng không làm gián đoạn kết nối
-  Serial.println(F("Starting pen down..."));
-  
-  // QUAN TRỌNG: Tắt động cơ bước trước khi điều khiển servo
-  digitalWrite(ENABLE_PIN, HIGH);  // Tắt stepper motors để tiết kiệm điện
-  delay(50);  // Đợi 50ms để mạch ổn định
-  
-  // Di chuyển servo từ từ với bước nhỏ
-  int currentPos = penServo.read();
-  
-  // Nếu đang ở trên vị trí cần hạ xuống
-  if (currentPos > PEN_DOWN_ANGLE) {
-    // Di chuyển từ từ xuống vị trí pen down
-    for (int angle = currentPos; angle > PEN_DOWN_ANGLE; angle -= 2) {
-      penServo.write(angle);
-      delay(20);  // Đợi 20ms giữa các bước - quan trọng
-    }
-  }
-  
-  // Đặt vị trí cuối cùng
-  penServo.write(PEN_DOWN_ANGLE);
-  delay(100);  // Đợi servo ổn định
-  
-  isPenDown = true;
-  
-  // Chỉ gửi phản hồi sau khi servo đã ổn định
-  Serial.println(F("PEN_DOWN"));
-  
-  // Kích hoạt lại động cơ bước
-  delay(100);  // Đợi thêm để đảm bảo servo đã ổn định
-  digitalWrite(ENABLE_PIN, LOW);  // Kích hoạt lại stepper motors
-  
-  // Gửi OK CUỐI CÙNG
-  Serial.println(F("OK"));
-}
-
-// Tương tự sửa cả hàm penUp()
-void penUp() {
-  Serial.println(F("Starting pen up..."));
-  
-  // Tắt động cơ bước
-  digitalWrite(ENABLE_PIN, HIGH);
-  delay(50);
-  
-  int currentPos = penServo.read();
-  
-  if (currentPos < PEN_UP_ANGLE) {
-    for (int angle = currentPos; angle < PEN_UP_ANGLE; angle += 2) {
-      penServo.write(angle);
-      delay(20);
-    }
-  }
-  
-  penServo.write(PEN_UP_ANGLE);
-  delay(100);
-  
-  isPenDown = false;
-  Serial.println(F("PEN_UP"));
-  
-  // Kích hoạt lại động cơ
-  delay(100);
-  digitalWrite(ENABLE_PIN, LOW);
-  
-  Serial.println(F("OK"));
-}
-
-// --- Chức năng hiệu chuẩn ---
-void calibratePosition() {
-  // Đặt lại vị trí hiện tại là 90°, 90° 
-  stepperX.setCurrentPosition((long)(90 * STEPS_PER_DEG * X_DIRECTION));
-  stepperY.setCurrentPosition((long)(90 * STEPS_PER_DEG * Y_DIRECTION));
-  currentX = 90.0;
-  currentY = 90.0;
-  
-  Serial.println(F("CALIBRATED_TO_90_90"));
-}
-
-// --- Hàm home với kiểm tra vị trí hiện tại ---
-void homePosition() {
-  enableMotors();
-  mode = HOME;
-  commandCompleted = false;
-  
-  // Lấy vị trí hiện tại (góc)
-  long currentPosX = stepperX.currentPosition();
-  long currentPosY = stepperY.currentPosition();
-  float currentAngX = currentPosX / (STEPS_PER_DEG * X_DIRECTION);
-  float currentAngY = currentPosY / (STEPS_PER_DEG * Y_DIRECTION);
-  
-  Serial.print(F("DEBUG: Current X angle:"));
-  Serial.print(currentAngX);
-  Serial.print(F(" Y angle:"));
-  Serial.println(currentAngY);
-  
-  // Kiểm tra nếu đã ở gần vị trí home
-  if (abs(currentAngX - 90) < 2 && abs(currentAngY - 90) < 2) {
-    Serial.println(F("ALREADY_AT_HOME"));
-    commandCompleted = true;
-  } else {
-    moveToAngle(stepperX, 90, X_DIRECTION);
-    moveToAngle(stepperY, 90, Y_DIRECTION);
-    Serial.println(F("HOMING"));
-  }
-}
-
 void setup() {
   Serial.begin(9600);
   
@@ -239,18 +226,16 @@ void setup() {
   pinMode(ENABLE_PIN, OUTPUT);
   
   // Kích hoạt động cơ
-  enableMotors();
+  enableMotors(true);
 
   // Thiết lập servo
   penServo.attach(SERVO_PIN);
   penUp();
-  delay(300);
+  delay(200);
 
-  // Khởi tạo stepper với tốc độ và gia tốc thấp hơn
+  // Khởi tạo stepper
   stepperX.setMaxSpeed(DEFAULT_SPEED);
   stepperX.setAcceleration(DEFAULT_ACCEL);
-  
-  // Thiết lập vị trí hiện tại là 90°, 90° với hướng quay
   stepperX.setCurrentPosition((long)(90 * STEPS_PER_DEG * X_DIRECTION));
 
   stepperY.setMaxSpeed(DEFAULT_SPEED); 
@@ -266,7 +251,7 @@ void setup() {
 
 void loop() {
   // Kiểm tra watchdog - nếu quá lâu không nhận được lệnh, reset trạng thái
-  if (millis() - lastCommandTime > WATCHDOG_TIMEOUT && !commandCompleted) {
+  if (millis() - lastCommandTime > WATCHDOG_TIMEOUT && !commandCompleted && mode != IDLE) {
     Serial.println(F("WATCHDOG: Command timeout - resetting state"));
     commandCompleted = true;
     mode = IDLE;
@@ -280,13 +265,8 @@ void loop() {
     uint8_t len = Serial.readBytesUntil('\n', buffer, 31);
     buffer[len] = '\0';
     
-    // Xử lý lệnh - phản hồi cho tất cả các lệnh
+    // Xử lý lệnh
     processCommand(buffer);
-    
-    // Đảm bảo phản hồi sau mỗi lệnh
-    if (mode == IDLE && commandCompleted) {
-      Serial.println(F("OK"));
-    }
   }
 
   // Xử lý chuyển động
@@ -318,28 +298,21 @@ void loop() {
 void processCommand(const char* buffer) {
   // Xử lý lệnh gốc từ Python
   if (strcmp(buffer, "status") == 0) {
-    // QUAN TRỌNG: Gửi chuỗi "OK" để Python nhận biết kết nối thành công
     Serial.println(F("OK"));
-    
-    // Sau đó mới in thông tin debug
     Serial.println(commandCompleted ? F("READY") : F("BUSY"));
-    Serial.print(F("DEBUG: X pos:"));
-    Serial.print(stepperX.currentPosition());
-    Serial.print(F(" Y pos:"));
-    Serial.println(stepperY.currentPosition());
   }
   else if (strcmp(buffer, "test") == 0) {
-    enableMotors();
+    enableMotors(true);
     mode = TEST;
     testSteppers();
     mode = IDLE;
     Serial.println(F("TEST_COMPLETE"));
   }
   else if (strcmp(buffer, "enable") == 0) {
-    enableMotors();
+    enableMotors(true);
   }
   else if (strcmp(buffer, "disable") == 0) {
-    disableMotors();
+    enableMotors(false);
   }
   else if (strcmp(buffer, "u") == 0 || strcmp(buffer, "up") == 0) {
     penUp();
@@ -360,7 +333,7 @@ void processCommand(const char* buffer) {
     }
   }
   else if (buffer[0] == 'h' || strcmp(buffer, "home") == 0) {
-    // Sử dụng hàm home mới
+    // Sử dụng hàm home
     homePosition();
   }
   else if (buffer[0] == 'f') {
@@ -399,28 +372,32 @@ void processCommand(const char* buffer) {
     char* comma = strchr(buffer, ',');
     if (comma) {
       *comma = '\0';
-      float xAng = atof(buffer);
-      float yAng = atof(comma+1);
+      float theta1 = atof(buffer);
+      float theta2 = atof(comma+1);
       
-      enableMotors();
-      mode = MOVE;
-      commandCompleted = false;
-      moveToAngle(stepperX, xAng, X_DIRECTION);
-      moveToAngle(stepperY, yAng, Y_DIRECTION);
-      
-      Serial.print(F("MOVING_TO:"));
-      Serial.print(xAng);
-      Serial.print(F(","));
-      Serial.println(yAng);
-      
-      // Cập nhật vị trí đích
-      currentX = xAng;
-      currentY = yAng;
+      // Kiểm tra giới hạn góc trước khi di chuyển
+      if (checkAngleLimits(theta1, theta2)) {
+        enableMotors(true);
+        mode = MOVE;
+        commandCompleted = false;
+        moveToAngle(stepperX, theta1, X_DIRECTION);
+        moveToAngle(stepperY, theta2, Y_DIRECTION);
+        
+        Serial.print(F("MOVING_TO:"));
+        Serial.print(theta1);
+        Serial.print(F(","));
+        Serial.println(theta2);
+      }
     }
     else {
       Serial.print(F("UNKNOWN_COMMAND:"));
       Serial.println(buffer);
     }
+  }
+  
+  // Phản hồi cho các lệnh đơn giản
+  if (mode == IDLE && commandCompleted) {
+    Serial.println(F("OK"));
   }
 }
 
@@ -428,7 +405,7 @@ void processCommand(const char* buffer) {
 void processGcode(const char* gcode) {
   // Bỏ qua comment hoặc dòng trống
   if (strlen(gcode) < 1 || gcode[0] == ';') {
-    Serial.println(F("EMPTY_LINE"));
+    Serial.println(F("OK"));
     return;
   }
 
@@ -442,11 +419,13 @@ void processGcode(const char* gcode) {
   
   // Trích xuất tham số
   float x = 0, y = 0, z = 0, f = 0;
-  bool hasX = false, hasY = false, hasZ = false;
+  bool hasX = false, hasY = false, hasZ = false, hasF = false;
   
   // Tìm các tham số
   char *token = strtok(gcopy, " ");
-  while (token != NULL) {
+  char *command = token;  // Lưu lệnh (G0, G1, v.v.)
+  
+  while ((token = strtok(NULL, " "))) {
     if (*token == 'X') {
       x = atof(token + 1);
       hasX = true;
@@ -458,17 +437,12 @@ void processGcode(const char* gcode) {
       hasZ = true;
     } else if (*token == 'F') {
       f = atof(token + 1);
+      hasF = true;
     }
-    token = strtok(NULL, " ");
   }
   
-  // Reset để sử dụng lại cho so sánh lệnh
-  strncpy(gcopy, gcode, 31);
-  gcopy[31] = '\0';
-  for (char* p = gcopy; *p; ++p) *p = toupper(*p);
-
-  // Xử lý G-code
-  if (strncmp(gcopy, "G0 ", 3) == 0 || strncmp(gcopy, "G1 ", 3) == 0) {
+  // Xử lý lệnh G-code
+  if (strncmp(command, "G0", 2) == 0 || strncmp(command, "G1", 2) == 0) {
     // Xử lý Z (nâng/hạ bút)
     if (hasZ) {
       if (z <= 0) {
@@ -478,31 +452,26 @@ void processGcode(const char* gcode) {
       }
     }
     
+    // Thiết lập tốc độ nếu được chỉ định
+    if (hasF) {
+      float speedFactor = constrain(f / 60.0, 100, 1000);
+      stepperX.setMaxSpeed(speedFactor);
+      stepperY.setMaxSpeed(speedFactor);
+    }
+    
     // Xử lý X, Y - Di chuyển theo góc
     if (hasX && hasY) {
-      mode = MOVE;
-      enableMotors();
-      commandCompleted = false;
-      
-      // Thiết lập tốc độ nếu được chỉ định
-      if (f > 0) {
-        float speedFactor = constrain(f / 60.0, 100, 1000);
-        stepperX.setMaxSpeed(speedFactor);
-        stepperY.setMaxSpeed(speedFactor);
+      if (checkAngleLimits(x, y)) {
+        mode = MOVE;
+        commandCompleted = false;
+        moveToAngle(stepperX, x, X_DIRECTION);
+        moveToAngle(stepperY, y, Y_DIRECTION);
+        
+        Serial.print(F("MOVING_TO:"));
+        Serial.print(x);
+        Serial.print(F(","));
+        Serial.println(y);
       }
-      
-      // Di chuyển đến góc được chỉ định
-      moveToAngle(stepperX, x, X_DIRECTION);
-      moveToAngle(stepperY, y, Y_DIRECTION);
-      
-      Serial.print(F("MOVING_TO:"));
-      Serial.print(x);
-      Serial.print(F(","));
-      Serial.println(y);
-      
-      // Cập nhật vị trí đích
-      currentX = x;
-      currentY = y;
     } 
     else if (hasZ) {
       Serial.println(F("Z_ONLY"));
@@ -511,9 +480,9 @@ void processGcode(const char* gcode) {
       Serial.println(F("ERROR:Missing coordinates"));
     }
   }
-  else if (strncmp(gcopy, "G4", 2) == 0) {
+  else if (strncmp(command, "G4", 2) == 0) {
     // Tìm tham số P (thời gian tạm dừng - ms)
-    char *p_param = strstr(gcopy, "P");
+    char *p_param = strstr(command, "P");
     if (p_param) {
       long delay_ms = atol(p_param + 1);
       Serial.print(F("DWELL:"));
@@ -522,29 +491,28 @@ void processGcode(const char* gcode) {
       Serial.println(F("DWELL_COMPLETE"));
     }
   }
-  else if (strncmp(gcopy, "G28", 3) == 0) {
-    // Sử dụng hàm home mới
+  else if (strncmp(command, "G28", 3) == 0) {
     homePosition();
   }
-  else if (strncmp(gcopy, "G90", 3) == 0) {
+  else if (strncmp(command, "G90", 3) == 0) {
     absolutePositioning = true;
     Serial.println(F("ABS_MODE"));
   }
-  else if (strncmp(gcopy, "G91", 3) == 0) {
+  else if (strncmp(command, "G91", 3) == 0) {
     absolutePositioning = false;
     Serial.println(F("REL_MODE"));
   }
-  else if (strncmp(gcopy, "M3", 2) == 0) {
+  else if (strncmp(command, "M3", 2) == 0) {
     penDown();
   }
-  else if (strncmp(gcopy, "M5", 2) == 0) {
+  else if (strncmp(command, "M5", 2) == 0) {
     penUp();
   }
-  else if (strncmp(gcopy, "M17", 3) == 0) {
-    enableMotors();
+  else if (strncmp(command, "M17", 3) == 0) {
+    enableMotors(true);
   }
-  else if (strncmp(gcopy, "M84", 3) == 0 || strncmp(gcopy, "M18", 3) == 0) {
-    disableMotors();
+  else if (strncmp(command, "M84", 3) == 0 || strncmp(command, "M18", 3) == 0) {
+    enableMotors(false);
   }
   else {
     Serial.print(F("ERROR:Unknown command - "));
