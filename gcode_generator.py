@@ -802,7 +802,7 @@ class ImageToGcodeApp:
         thread.start()
 
     def _run_gcode_generation(self):
-        """Run G-code generation process for the main object"""
+        """Run G-code generation process for the main object - G0 ONLY, NO COMMENTS"""
         try:
             # Custom workspace boundaries
             custom_x_min = self.x_min_var.get()
@@ -815,229 +815,219 @@ class ImageToGcodeApp:
             scale_factor = self.scale_var.get()
             use_zigzag = self.zigzag_var.get()
             draw_frame = self.draw_frame_var.get()
-            drawing_speed = self.speed_var.get()
+            drawing_speed = self.speed_var.get()  # Tốc độ F vẫn có thể dùng cho G0 trên một số máy
 
             # Calculate custom workspace size
-            workspace_width = custom_x_max - custom_x_min  # Should be 20
-            workspace_height = custom_y_max - custom_y_min  # Should be 14
+            workspace_width = custom_x_max - custom_x_min
+            workspace_height = custom_y_max - custom_y_min
 
             # Check if processed image exists
             if self.processed_image is None:
-                raise ValueError("No processed image data available. Please run preview first.")
+                if self.displayed_image is not None:
+                    self.preview_processing()
+                    if self.processed_image is None:
+                        raise ValueError("Preview processing failed to generate processed image.")
+                else:
+                    raise ValueError("No image loaded or processed.")
 
             # Read processed image
             img_binary = self.processed_image
+            if img_binary is None:
+                raise ValueError("Processed image data is missing after preview.")
+
+            # Ensure img_binary is 2D
+            img_shape = img_binary.shape
+            if len(img_shape) == 3:
+                img_binary_gray = cv2.cvtColor(img_binary, cv2.COLOR_BGR2GRAY)
+                threshold_val = self.threshold_var.get()
+                _, img_binary = cv2.threshold(img_binary_gray, threshold_val, 255, cv2.THRESH_BINARY)
+            elif len(img_shape) != 2:
+                raise ValueError(f"Processed image has unexpected shape: {img_shape}")
             height, width = img_binary.shape
 
-            # Calculate scale to fit within custom workspace
-            actual_scale = scale_factor * min(workspace_width / width, workspace_height / height) * 0.95
-
-            # Calculate image center position to center in custom workspace
+            # Calculate scale and offset
+            safe_scale_factor = 0.98
+            actual_scale = scale_factor * min(workspace_width / width, workspace_height / height) * safe_scale_factor
             offset_x = custom_x_min + (workspace_width - width * actual_scale) / 2
             offset_y = custom_y_min + (workspace_height - height * actual_scale) / 2
 
-            # Convert line_spacing from mm to cm
-            line_spacing_cm = line_spacing / 10
-
-            # Define target pixel value based on drawing mode
+            # Define target pixel value
             target_value = 0 if self.draw_black_var.get() else 255
 
-            # Create G-code header
+            # Create G-code list (NO COMMENTS)
             gcode = []
-            gcode.append("; G-code generated from image using raster technique")
-            gcode.append("; Source image: " + os.path.basename(self.image_path))
-            gcode.append(f"; Image size: {width}x{height} pixels")
-            gcode.append(
-                f"; Custom Workspace: X={custom_x_min} to {custom_x_max}, Y={custom_y_min} to {custom_y_max} (cm)")
-            gcode.append(f"; Line spacing: {line_spacing} mm")
-            gcode.append("G21 ; Set units to mm")
-            gcode.append("G90 ; Absolute positioning")
-            gcode.append(f"F{drawing_speed} ; Set feedrate")
-            gcode.append("M5 ; Pen up")
+            gcode.append("G21")  # Set units to mm
+            gcode.append("G90")  # Absolute positioning
+            gcode.append(f"F{drawing_speed}")  # Set feedrate (may affect G0 on some controllers)
+            gcode.append("M5")  # Pen up (ensure starts up)
+            # gcode.append("G4 P0.5")               # Removed pause
 
-            # Draw reference frame if requested
+            # Draw reference frame if requested (G0 only, no comments)
             if draw_frame:
-                gcode.append("; Drawing custom workspace frame")
-                # Draw border rectangle
-                gcode.append(f"G0 X{custom_x_min:.2f} Y{custom_y_min:.2f} ; Move to bottom-left corner")
-                gcode.append("M3 ; Pen down")
-                gcode.append(f"G1 X{custom_x_max:.2f} Y{custom_y_min:.2f} ; Draw bottom line")
-                gcode.append(f"G1 X{custom_x_max:.2f} Y{custom_y_max:.2f} ; Draw right line")
-                gcode.append(f"G1 X{custom_x_min:.2f} Y{custom_y_max:.2f} ; Draw top line")
-                gcode.append(f"G1 X{custom_x_min:.2f} Y{custom_y_min:.2f} ; Draw left line")
-                gcode.append("M5 ; Pen up")
+                # Move to corner
+                gcode.append(f"G0 X{custom_x_min:.3f} Y{custom_y_min:.3f}")
+                gcode.append("M3")  # Pen down (Using simple M3)
+                # gcode.append("G4 P0.2")               # Removed pause
+                # Draw border using G0
+                gcode.append(f"G0 X{custom_x_max:.3f} Y{custom_y_min:.3f}")  # Draw bottom line
+                gcode.append(f"G0 X{custom_x_max:.3f} Y{custom_y_max:.3f}")  # Draw right line
+                gcode.append(f"G0 X{custom_x_min:.3f} Y{custom_y_max:.3f}")  # Draw top line
+                gcode.append(f"G0 X{custom_x_min:.3f} Y{custom_y_min:.3f}")  # Draw left line (close loop)
+                gcode.append("M5")  # Pen up
+                # gcode.append("G4 P0.2")               # Removed pause
 
-                # Draw centerlines
-                center_x = (custom_x_min + custom_x_max) / 2
-                center_y = (custom_y_min + custom_y_max) / 2
-
-                # Draw X center line
-                gcode.append(f"G0 X{center_x:.2f} Y{custom_y_min:.2f} ; Move to bottom center")
-                gcode.append("M3 ; Pen down")
-                gcode.append(f"G1 X{center_x:.2f} Y{custom_y_max:.2f} ; Draw vertical center line")
-                gcode.append("M5 ; Pen up")
-
-                # Draw Y center line
-                gcode.append(f"G0 X{custom_x_min:.2f} Y{center_y:.2f} ; Move to left center")
-                gcode.append("M3 ; Pen down")
-                gcode.append(f"G1 X{custom_x_max:.2f} Y{center_y:.2f} ; Draw horizontal center line")
-                gcode.append("M5 ; Pen up")
+                # Draw centerlines (optional, G0 only)
+                # center_x = (custom_x_min + custom_x_max) / 2
+                # center_y = (custom_y_min + custom_y_max) / 2
+                # gcode.append(f"G0 X{center_x:.3f} Y{custom_y_min:.3f}") # Move to bottom center
+                # gcode.append("M3")
+                # gcode.append(f"G0 X{center_x:.3f} Y{custom_y_max:.3f}") # Vertical center
+                # gcode.append("M5")
+                # gcode.append(f"G0 X{custom_x_min:.3f} Y{center_y:.3f}") # Move to left center
+                # gcode.append("M3")
+                # gcode.append(f"G0 X{custom_x_max:.3f} Y{center_y:.3f}") # Horizontal center
+                # gcode.append("M5")
 
             # Move to starting position for image
-            gcode.append(f"G0 X{offset_x:.2f} Y{offset_y:.2f} ; Move to starting position")
+            start_x_img = offset_x
+            start_y_img = offset_y  # Start Y at the bottom according to image array (pixel 0)
+            # G-code Y increases upwards, so we iterate Y pixel index differently
+            # Move to the coordinates corresponding to the first row to be processed (y_px = height - 1)
+            initial_real_y = offset_y + (height - 1) * actual_scale
+            gcode.append(f"G0 X{start_x_img:.3f} Y{initial_real_y:.3f}")  # Move to start of first scan row
 
             # Counters
             line_count = 0
             scan_lines = 0
 
             # Scan image and create G-code
-            zigzag = False  # Zigzag direction tracker
-            progress_step = 100 / height
+            zigzag_direction = 1
+            progress_step = 100.0 / height
 
-            for y in range(height):
-                # Calculate actual Y position (in cm)
-                real_y = offset_y + (height - y - 1) * actual_scale
+            # Determine pixel step based on line spacing and scale
+            line_spacing_unit = line_spacing  # Assuming mm
+            pixel_step_y = max(1, int(line_spacing_unit / actual_scale))
 
-                # Skip if outside custom workspace
+            # Iterate pixel rows from top-down (image array index)
+            # G-code Y decreases as image Y pixel index increases
+            for y_px in range(0, height, pixel_step_y):
+                # Calculate actual Y position in machine coordinates
+                # G-code Y = offset_y + (height - 1 - y_px) * actual_scale # If Y increases upwards
+                real_y = offset_y + (height - 1 - y_px) * actual_scale  # Correct Y mapping
+
+                # Skip if row is outside workspace
                 if real_y < custom_y_min or real_y > custom_y_max:
-                    continue
-
-                # Process only every line_spacing_cm
-                if y % max(1, int(line_spacing_cm / actual_scale)) != 0:
                     continue
 
                 scan_lines += 1
 
-                # Find all pixels to draw in this row
-                pixels_to_draw = []
+                # Find segments to draw in this row
+                segments = []
+                start_px = -1
+                if use_zigzag and zigzag_direction == -1:
+                    x_range = range(width - 1, -1, -1)
+                else:
+                    x_range = range(width)
 
-                # Get pixel indices in row
-                range_x = range(width)
-                if zigzag:  # Reverse scan direction for zigzag
-                    range_x = range(width - 1, -1, -1)
+                for x_px in x_range:
+                    if 0 <= y_px < height and 0 <= x_px < width:
+                        if img_binary[y_px, x_px] == target_value:
+                            if start_px == -1: start_px = x_px
+                        elif start_px != -1:
+                            end_px = x_px - zigzag_direction
+                            segments.append((start_px, end_px) if zigzag_direction == 1 else (end_px, start_px))
+                            start_px = -1
+                    elif start_px != -1:
+                        end_px = x_px - zigzag_direction
+                        segments.append((start_px, end_px) if zigzag_direction == 1 else (end_px, start_px))
+                        start_px = -1
+                if start_px != -1:
+                    end_px = x_range[-1]
+                    segments.append((start_px, end_px) if zigzag_direction == 1 else (end_px, start_px))
 
-                # FIX: Store pixels with explicit type casting to avoid type issues
-                for x in range_x:
-                    # Only draw for target pixels
-                    if img_binary[y, x] == target_value:
-                        real_x = offset_x + x * actual_scale
-                        if custom_x_min <= real_x <= custom_x_max:
-                            # Store exactly two values with explicit type casting
-                            pixels_to_draw.append((int(x), float(real_x)))
+                # Generate G-code for segments (G0 ONLY, NO COMMENTS)
+                if segments:
+                    last_x_pos = None
+                    for seg_start_px, seg_end_px in segments:
+                        real_start_x = offset_x + seg_start_px * actual_scale
+                        real_end_x = offset_x + seg_end_px * actual_scale
+                        real_start_x = max(custom_x_min, min(custom_x_max, real_start_x))
+                        real_end_x = max(custom_x_min, min(custom_x_max, real_end_x))
 
-                # Skip if no pixels to draw
-                if not pixels_to_draw:
-                    continue
+                        if abs(real_end_x - real_start_x) < 0.01: continue
 
-                # Build segments with explicit validation
-                current_segment = []
-                for pixel_data in pixels_to_draw:
-                    # FIX: Only process if pixel_data has exactly 2 elements
-                    if len(pixel_data) == 2:
-                        x, real_x = pixel_data
+                        # Move to segment start (pen up)
+                        # Optimize moves: only send G0 if position changes significantly
+                        # We assume the machine is already at real_y from the previous G0 or segment end
+                        # Only need to move X if it's different from last_x_pos
+                        current_x = real_start_x  # Where we want to start drawing
+                        # Get current X position estimate (tricky without machine feedback, assume it's last_x_pos)
+                        if last_x_pos is None or abs(current_x - last_x_pos) > 0.01:
+                            gcode.append(f"G0 X{current_x:.3f} Y{real_y:.3f}")  # Move to start, ensure Y is correct
 
-                        if not current_segment:
-                            # Start new segment
-                            current_segment = [(x, real_x)]
-                        elif abs(x - current_segment[-1][0]) <= 1:
-                            # Continue current segment
-                            current_segment.append((x, real_x))
-                        else:
-                            # End current segment and start a new one
-                            # FIX: More validation to avoid index errors
-                            if len(current_segment) > 0 and len(current_segment[0]) == 2:
-                                start_data = current_segment[0]
-                                end_data = current_segment[-1]
-
-                                # FIX: Safe unpacking with explicit indexing
-                                start_x = start_data[0]
-                                real_start_x = start_data[1]
-                                end_x = end_data[0]
-                                real_end_x = end_data[1]
-
-                                # Move to segment start
-                                gcode.append(f"G0 F{drawing_speed * 1.5:.0f} X{real_start_x:.2f} Y{real_y:.2f}")
-                                gcode.append("M3 ; Pen down")
-                                line_count += 1
-
-                                # Draw to segment end
-                                gcode.append(f"G1 F{drawing_speed:.0f} X{real_end_x:.2f} Y{real_y:.2f}")
-                                gcode.append("M5 ; Pen up")
-
-                            # Start new segment
-                            current_segment = [(x, real_x)]
-
-                # Process final segment with validation
-                # FIX: Added more validation to prevent IndexError
-                if current_segment and len(current_segment) > 0:
-                    # FIX: Safely access first and last elements
-                    if len(current_segment[0]) == 2 and len(current_segment[-1]) == 2:
-                        start_data = current_segment[0]
-                        end_data = current_segment[-1]
-
-                        # Use explicit indexing to avoid tuple unpacking issues
-                        start_x = start_data[0]
-                        real_start_x = start_data[1]
-                        end_x = end_data[0]
-                        real_end_x = end_data[1]
-
-                        # Move to segment start
-                        gcode.append(f"G0 F{drawing_speed * 1.5:.0f} X{real_start_x:.2f} Y{real_y:.2f}")
-                        gcode.append("M3 ; Pen down")
+                        # Pen down
+                        gcode.append("M3")
                         line_count += 1
+                        # gcode.append("G4 P0.05") # Removed pause
 
-                        # Draw to segment end
-                        gcode.append(f"G1 F{drawing_speed:.0f} X{real_end_x:.2f} Y{real_y:.2f}")
-                        gcode.append("M5 ; Pen up")
+                        # "Draw" the segment using G0
+                        gcode.append(f"G0 X{real_end_x:.3f} Y{real_y:.3f}")  # Move to end with G0
+                        last_x_pos = real_end_x  # Update last X position
+
+                        # Pen up
+                        gcode.append("M5")
+                        # gcode.append("G4 P0.05") # Removed pause
 
                 # Change direction for next scan if zigzag
                 if use_zigzag:
-                    zigzag = not zigzag
+                    zigzag_direction *= -1
 
                 # Update progress
-                progress = min(100, int(y * progress_step))
-                self.root.after(0, lambda p=progress: self.progress_var.set(p))
+                progress = min(100.0, (y_px + 1) * progress_step)  # Progress based on rows scanned
+                self.root.after(0, self.progress_var.set, int(progress))
 
-                # Check if process was canceled
-                if not self.processing:
-                    return
-
-            # G-code footer - move to safe position in custom workspace
+            # G-code footer (NO COMMENTS)
             center_x = (custom_x_min + custom_x_max) / 2
-            gcode.append(
-                f"G0 F{drawing_speed * 1.5:.0f} X{center_x:.2f} Y{custom_y_max - 2:.2f} ; Move to safe position")
-            gcode.append("M5 ; Ensure pen is up")
-            gcode.append("; End of G-code")
+            safe_y = custom_y_max - (0.1 * workspace_height)
+            safe_y = max(custom_y_min, safe_y)
+            gcode.append(f"G0 X{center_x:.3f} Y{safe_y:.3f}")  # Move to safe end position
+            gcode.append("M5")  # Ensure pen is up
+            gcode.append("M2")  # End of program
 
-            # Update results
+            # Update results on the main thread
             self.gcode_lines = gcode
-            self.root.after(0, self.update_gcode_display, gcode, line_count, scan_lines)
+            self.root.after(0, self.update_gcode_display, gcode, line_count,
+                            scan_lines)  # line_count now counts M3 commands
 
         except Exception as e:
-            # Fix: Store the error message first to avoid lambda capture issues
-            error_msg = str(e)
-            self.root.after(0, lambda err=error_msg: messagebox.showerror("Error", f"G-code generation error: {err}"))
-            self.root.after(0, lambda err=error_msg: self.status_var.set(f"Error: {err}"))
+            import traceback
+            error_msg = f"Error: {str(e)}\n{traceback.format_exc()}"
+            print(error_msg)
+            self.root.after(0, lambda err=str(e): messagebox.showerror("Error",
+                                                                       f"G-code generation error:\n{err}\n\nSee console for details."))
+            self.root.after(0, lambda err=str(e): self.status_var.set(f"Error: {err}"))
         finally:
             self.processing = False
+            self.root.after(0, self.progress_var.set, 0)
 
     def update_gcode_display(self, gcode, line_count, scan_lines):
         """Update G-code display after successful generation"""
         # Display G-code
         self.gcode_text.delete(1.0, tk.END)
-        self.gcode_text.insert(tk.END, '\n'.join(gcode))
+        self.gcode_text.insert(tk.END, '\n'.join(gcode))  # Join without comments
 
-        # Update info
-        self.line_count_var.set(f"Scan lines: {scan_lines}")
-        self.file_size_var.set(f"Drawing strokes: {line_count}")
+        # Update info (line_count might represent pen down events now)
+        self.line_count_var.set(f"Scan rows processed: {scan_lines}")  # Changed label meaning
+        self.file_size_var.set(f"Pen down commands (M3): {line_count}")  # Changed label meaning
 
         # Update progress and status
         self.progress_var.set(100)
-        self.status_var.set("G-code generation complete")
+        self.status_var.set("G-code generation complete (G0 only)")
 
         # Switch to G-code tab
         self.tabs.select(self.gcode_tab)
 
+    # Make sure save_gcode also doesn't add comments if any were missed
     def save_gcode(self):
         """Save G-code to file with proper ASCII encoding"""
         if not self.gcode_lines:
@@ -1045,30 +1035,31 @@ class ImageToGcodeApp:
             return
 
         file_path = filedialog.asksaveasfilename(
-            title="Save G-code",
+            title="Save G-code (G0 Only)",  # Updated title
             defaultextension=".gcode",
-            filetypes=[
-                ("G-code files", "*.gcode"),
-                ("Text files", "*.txt"),
-                ("All files", "*.*")
-            ]
+            filetypes=[("G-code files", "*.gcode *.nc"), ("All files", "*.*")]  # Added .nc
         )
 
         if not file_path:
             return
 
         try:
-            # Use ASCII encoding only
+            # Filter again just in case, and ensure only ASCII
+            final_gcode = []
+            for line in self.gcode_lines:
+                trimmed_line = line.strip()
+                # Remove potential comments and ensure not empty
+                if trimmed_line and not trimmed_line.startswith(';') and not trimmed_line.startswith('('):
+                    ascii_line = ''.join(c for c in trimmed_line if ord(c) < 128)
+                    if ascii_line:  # Add only if not empty after filtering
+                        final_gcode.append(ascii_line)
+
+            # Use ASCII encoding only, write filtered lines
             with open(file_path, 'w', encoding='ascii', errors='ignore') as f:
-                # Ensure only ASCII characters
-                ascii_gcode = []
-                for line in self.gcode_lines:
-                    ascii_line = ''.join(c for c in line if ord(c) < 128)
-                    ascii_gcode.append(ascii_line)
-                f.write('\n'.join(ascii_gcode))
+                f.write('\n'.join(final_gcode))  # Write the cleaned list
 
             self.status_var.set(f"G-code saved to {os.path.basename(file_path)}")
-            messagebox.showinfo("Success", f"G-code saved to {file_path}")
+            messagebox.showinfo("Success", f"G-code (G0 only) saved to {file_path}")
 
         except Exception as e:
             messagebox.showerror("Error", f"Cannot save file: {str(e)}")
