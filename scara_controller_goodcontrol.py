@@ -379,14 +379,14 @@ class ScaraGUI:
         speed_frame.pack(fill=tk.X, pady=5)
 
         ttk.Label(speed_frame, text="Tốc độ:").grid(row=0, column=0, padx=5)
-        self.speed_var = tk.StringVar(value="600")
+        self.speed_var = tk.StringVar(value="4200")
         speed_entry = ttk.Entry(speed_frame, textvariable=self.speed_var, width=8)
         speed_entry.grid(row=0, column=1, padx=5)
 
         ttk.Button(speed_frame, text="Set", command=self.set_speed).grid(row=0, column=2, padx=5)
 
         ttk.Label(speed_frame, text="Gia tốc:").grid(row=1, column=0, padx=5, pady=5)
-        self.accel_var = tk.StringVar(value="200")
+        self.accel_var = tk.StringVar(value="1800")
         accel_entry = ttk.Entry(speed_frame, textvariable=self.accel_var, width=8)
         accel_entry.grid(row=1, column=1, padx=5, pady=5)
 
@@ -443,6 +443,17 @@ class ScaraGUI:
         # Nhãn tiến trình
         self.progress_label = ttk.Label(gcode_frame, text="0% hoàn thành")
         self.progress_label.pack(pady=2)
+        delay_frame = ttk.Frame(gcode_frame)
+        delay_frame.pack(fill=tk.X, pady=2)
+
+        ttk.Label(delay_frame, text="Thời gian chờ giữa các lệnh (s):").pack(side=tk.LEFT, padx=5)
+
+        self.gcode_delay_var = tk.DoubleVar(value=0.2)  # Giá trị mặc định 0.2 giây
+        delay_spinbox = ttk.Spinbox(delay_frame, from_=0.05, to=5.0, increment=0.05,
+                                    textvariable=self.gcode_delay_var, width=6)
+        delay_spinbox.pack(side=tk.LEFT, padx=5)
+
+        ttk.Label(delay_frame, text="(Tăng nếu robot di chuyển không ổn định)").pack(side=tk.LEFT, padx=5)
 
         # Panel thông báo
         log_frame = ttk.LabelFrame(control_frame, text="Nhật ký", padding=5)
@@ -1035,6 +1046,10 @@ class ScaraGUI:
         if self.gcode_running and not self.gcode_paused:
             return
 
+        # Ghi lại thời gian chờ hiện tại vào log
+        delay = self.gcode_delay_var.get()
+        self.log(f"Sử dụng thời gian chờ giữa các lệnh: {delay:.2f} giây")
+
         # Bắt đầu xử lý từ đầu
         self.gcode_running = True
         self.gcode_paused = False
@@ -1083,8 +1098,9 @@ class ScaraGUI:
                 progress = int(100 * self.gcode_line_num / self.gcode_total_lines)
                 self.root.after(0, lambda p=progress: self.update_progress(p))
 
-                # Đợi một chút giữa các lệnh
-                time.sleep(0.2)
+                # Sử dụng thời gian chờ từ biến thay vì giá trị cố định
+                delay = self.gcode_delay_var.get()
+                time.sleep(delay)
 
             # Hoàn thành
             if self.gcode_running:
