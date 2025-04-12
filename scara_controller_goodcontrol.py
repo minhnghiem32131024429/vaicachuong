@@ -27,20 +27,10 @@ logging.basicConfig(
     level=logging.INFO, # Mức log (DEBUG, INFO, WARNING, ERROR, CRITICAL)
     format='%(asctime)s [%(levelname)s] %(message)s',
     handlers=[
-        logging.FileHandler(log_file_path, mode='a', encoding='utf-8'), # Ghi log vào file, 'a' để nối tiếp
+        logging.FileHandler(log_file_path, mode='a'), # Ghi log vào file, 'a' để nối tiếp
         logging.StreamHandler(sys.stdout) # Gửi log INFO trở lên ra stdout
     ]
 )
-
-if sys.stdout.encoding != 'utf-8':
-    try:
-        # Thử cấu hình lại stdout encoding (có thể không thành công trên mọi terminal)
-        # sys.stdout.reconfigure(encoding='utf-8') # Python 3.7+
-        # Hoặc một cách khác là đặt biến môi trường PYTHONIOENCODING=utf-8 trước khi chạy script
-        logging.warning(f"Console encoding is '{sys.stdout.encoding}', not 'utf-8'. Vietnamese characters might not display correctly in console.")
-    except Exception as e:
-        logging.warning(f"Could not reconfigure stdout encoding: {e}")
-
 logging.info(f"Log file path: {log_file_path}")
 
 
@@ -300,7 +290,7 @@ class ScaraRobot:
 class ScaraGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("SCARA Controller") # Thêm ghi chú vào title
+        self.root.title("SCARA Controller - Flipped X") # Thêm ghi chú vào title
         try:
             self.root.state('zoomed')
         except tk.TclError:
@@ -472,19 +462,19 @@ class ScaraGUI:
 
         # --- Panel điều khiển (bên trái) ---
         control_panel = ttk.Frame(main_frame, padding=10)
-        main_frame.add(control_panel, weight=35)  # Tỷ lệ nhỏ hơn cho control
+        main_frame.add(control_panel, weight=35) # Tỷ lệ nhỏ hơn cho control
 
         # --- Panel hiển thị (bên phải) ---
         display_panel = ttk.Frame(main_frame, padding=10)
-        main_frame.add(display_panel, weight=65)  # Tỷ lệ lớn hơn cho display
+        main_frame.add(display_panel, weight=65) # Tỷ lệ lớn hơn cho display
 
         # === Bố cục trong Control Panel ===
-        control_panel.columnconfigure(0, weight=1)  # Cho phép cột 0 co giãn
+        control_panel.columnconfigure(0, weight=1) # Cho phép cột 0 co giãn
 
         # --- Khung Kết nối ---
         conn_frame = ttk.LabelFrame(control_panel, text="Kết nối", padding=10)
         conn_frame.grid(row=0, column=0, sticky=tk.EW, pady=(0, 10))
-        conn_frame.columnconfigure(1, weight=1)  # Cho combobox co giãn
+        conn_frame.columnconfigure(1, weight=1) # Cho combobox co giãn
 
         ttk.Label(conn_frame, text="Cổng COM:").grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
         self.port_var = tk.StringVar()
@@ -495,7 +485,7 @@ class ScaraGUI:
         refresh_btn.grid(row=0, column=2, padx=(0, 5), pady=5)
 
         ttk.Label(conn_frame, text="Baud Rate:").grid(row=1, column=0, padx=5, pady=5, sticky=tk.W)
-        self.baud_var = tk.StringVar(value="115200")  # Tăng baudrate mặc định
+        self.baud_var = tk.StringVar(value="115200") # Tăng baudrate mặc định
         baud_combo = ttk.Combobox(conn_frame, textvariable=self.baud_var, width=15, state="readonly",
                                   values=["9600", "19200", "38400", "57600", "115200", "250000"])
         baud_combo.grid(row=1, column=1, padx=5, pady=5, sticky=tk.EW)
@@ -506,7 +496,7 @@ class ScaraGUI:
         # --- Khung Điều khiển thủ công ---
         manual_frame = ttk.LabelFrame(control_panel, text="Điều khiển thủ công", padding=10)
         manual_frame.grid(row=1, column=0, sticky=tk.EW, pady=(0, 10))
-        manual_frame.columnconfigure(0, weight=1)  # Chia đều cột
+        manual_frame.columnconfigure(0, weight=1) # Chia đều cột
 
         # Điều khiển bút
         pen_frame = ttk.Frame(manual_frame)
@@ -514,46 +504,47 @@ class ScaraGUI:
         pen_frame.columnconfigure(0, weight=1)
         pen_frame.columnconfigure(1, weight=1)
 
-        self.pen_up_btn = ttk.Button(pen_frame, text="Nâng bút (U)", command=self.pen_up)  # Lưu tham chiếu
-        self.pen_up_btn.grid(row=0, column=0, padx=(0, 5), sticky=tk.EW)
-        self.root.bind('<u>', lambda event=None: self.pen_up())  # Phím tắt
-        self.root.bind('<U>', lambda event=None: self.pen_up())  # Phím tắt (Shift+u)
+        pen_up_btn = ttk.Button(pen_frame, text="Nâng bút (U)", command=self.pen_up)
+        pen_up_btn.grid(row=0, column=0, padx=(0, 5), sticky=tk.EW)
+        self.root.bind('<u>', lambda event=None: self.pen_up()) # Phím tắt
+        self.root.bind('<U>', lambda event=None: self.pen_up()) # Phím tắt (Shift+u)
 
-        self.pen_down_btn = ttk.Button(pen_frame, text="Hạ bút (D)", command=self.pen_down)  # Lưu tham chiếu
-        self.pen_down_btn.grid(row=0, column=1, padx=(5, 0), sticky=tk.EW)
-        self.root.bind('<d>', lambda event=None: self.pen_down())  # Phím tắt
-        self.root.bind('<D>', lambda event=None: self.pen_down())  # Phím tắt (Shift+d)
+        pen_down_btn = ttk.Button(pen_frame, text="Hạ bút (D)", command=self.pen_down)
+        pen_down_btn.grid(row=0, column=1, padx=(5, 0), sticky=tk.EW)
+        self.root.bind('<d>', lambda event=None: self.pen_down()) # Phím tắt
+        self.root.bind('<D>', lambda event=None: self.pen_down()) # Phím tắt (Shift+d)
 
         # Tọa độ XY (Hiển thị X đã lật)
         xy_frame = ttk.Frame(manual_frame)
         xy_frame.grid(row=1, column=0, columnspan=2, sticky=tk.EW, pady=5)
-        xy_frame.columnconfigure(1, weight=1)  # Cho Entry X giãn
-        xy_frame.columnconfigure(3, weight=1)  # Cho Entry Y giãn
-        xy_frame.columnconfigure(4, weight=2)  # Cho Button giãn nhiều hơn
+        xy_frame.columnconfigure(1, weight=1) # Cho Entry X giãn
+        xy_frame.columnconfigure(3, weight=1) # Cho Entry Y giãn
+        xy_frame.columnconfigure(4, weight=2) # Cho Button giãn nhiều hơn
 
         ttk.Label(xy_frame, text="X:").grid(row=0, column=0, padx=(0, 2))
         self.x_entry = ttk.Entry(xy_frame, width=7)
         self.x_entry.grid(row=0, column=1, padx=(0, 5), sticky=tk.EW)
-        x_display_init = -self.current_position.get('x', 0.0) if not math.isnan(
-            self.current_position.get('x', float('nan'))) else 0.0
+        # Hiển thị X display ban đầu
+        x_display_init = -self.current_position.get('x', 0.0) if not math.isnan(self.current_position.get('x', float('nan'))) else 0.0
         self.x_entry.insert(0, f"{x_display_init:.2f}")
+
 
         ttk.Label(xy_frame, text="Y:").grid(row=0, column=2, padx=(5, 2))
         self.y_entry = ttk.Entry(xy_frame, width=7)
         self.y_entry.grid(row=0, column=3, padx=(0, 5), sticky=tk.EW)
-        y_init = self.current_position.get('y', 0.0) if not math.isnan(
-            self.current_position.get('y', float('nan'))) else 0.0
+        y_init = self.current_position.get('y', 0.0) if not math.isnan(self.current_position.get('y', float('nan'))) else 0.0
         self.y_entry.insert(0, f"{y_init:.2f}")
 
-        self.go_xy_btn = ttk.Button(xy_frame, text="Di chuyển XY", command=self.move_to_xy)  # Lưu tham chiếu
-        self.go_xy_btn.grid(row=0, column=4, sticky=tk.EW)
+
+        go_xy_btn = ttk.Button(xy_frame, text="Di chuyển XY", command=self.move_to_xy)
+        go_xy_btn.grid(row=0, column=4, sticky=tk.EW)
 
         # Góc
         angle_frame = ttk.Frame(manual_frame)
         angle_frame.grid(row=2, column=0, columnspan=2, sticky=tk.EW, pady=5)
-        angle_frame.columnconfigure(1, weight=1)  # Cho Entry Theta1 giãn
-        angle_frame.columnconfigure(3, weight=1)  # Cho Entry Theta2 giãn
-        angle_frame.columnconfigure(4, weight=2)  # Cho Button giãn nhiều hơn
+        angle_frame.columnconfigure(1, weight=1) # Cho Entry Theta1 giãn
+        angle_frame.columnconfigure(3, weight=1) # Cho Entry Theta2 giãn
+        angle_frame.columnconfigure(4, weight=2) # Cho Button giãn nhiều hơn
 
         ttk.Label(angle_frame, text="θ1:").grid(row=0, column=0, padx=(0, 2))
         self.angle1_entry = ttk.Entry(angle_frame, width=7)
@@ -565,72 +556,76 @@ class ScaraGUI:
         self.angle2_entry.grid(row=0, column=3, padx=(0, 5), sticky=tk.EW)
         self.angle2_entry.insert(0, f"{self.current_angles['theta2']:.2f}")
 
-        self.go_angle_btn = ttk.Button(angle_frame, text="Di chuyển Góc", command=self.move_to_angle)  # Lưu tham chiếu
-        self.go_angle_btn.grid(row=0, column=4, sticky=tk.EW)
+        go_angle_btn = ttk.Button(angle_frame, text="Di chuyển Góc", command=self.move_to_angle)
+        go_angle_btn.grid(row=0, column=4, sticky=tk.EW)
 
         # Tốc độ và gia tốc
         speed_accel_frame = ttk.Frame(manual_frame)
         speed_accel_frame.grid(row=3, column=0, columnspan=2, sticky=tk.EW, pady=5)
         speed_accel_frame.columnconfigure(1, weight=1)
-        speed_accel_frame.columnconfigure(4, weight=1)
+        speed_accel_frame.columnconfigure(4, weight=1) # Index cột của accel entry là 4
 
         ttk.Label(speed_accel_frame, text="Tốc độ:").grid(row=0, column=0, padx=(0, 2), sticky=tk.W)
-        self.speed_var = tk.StringVar(value="4200")
+        self.speed_var = tk.StringVar(value="8000") # Tăng tốc độ mặc định firmware
         speed_entry = ttk.Entry(speed_accel_frame, textvariable=self.speed_var, width=6)
         speed_entry.grid(row=0, column=1, padx=(0, 5), sticky=tk.EW)
-        self.set_speed_button = ttk.Button(speed_accel_frame, text="Set", width=4, command=self.set_speed)
-        self.set_speed_button.grid(row=0, column=2, padx=(0, 10))
+        ttk.Button(speed_accel_frame, text="Set", width=4, command=self.set_speed).grid(row=0, column=2, padx=(0, 10))
 
         ttk.Label(speed_accel_frame, text="Gia tốc:").grid(row=0, column=3, padx=(10, 2), sticky=tk.W)
-        self.accel_var = tk.StringVar(value="1800")
+        self.accel_var = tk.StringVar(value="3000") # Tăng gia tốc mặc định firmware
         accel_entry = ttk.Entry(speed_accel_frame, textvariable=self.accel_var, width=6)
         accel_entry.grid(row=0, column=4, padx=(0, 5), sticky=tk.EW)
-        self.set_accel_button = ttk.Button(speed_accel_frame, text="Set", width=4, command=self.set_acceleration)
-        self.set_accel_button.grid(row=0, column=5, padx=(0, 0))
+        ttk.Button(speed_accel_frame, text="Set", width=4, command=self.set_acceleration).grid(row=0, column=5, padx=(0, 0))
 
         # Chức năng bổ sung (Home, Stop, Calibrate)
         func_frame = ttk.Frame(manual_frame)
         func_frame.grid(row=4, column=0, columnspan=2, sticky=tk.EW, pady=5)
         func_frame.columnconfigure(0, weight=1)
         func_frame.columnconfigure(1, weight=1)
-        func_frame.columnconfigure(2, weight=1)
+        func_frame.columnconfigure(2, weight=1) # Thêm cột cho Calibrate
 
-        self.home_btn = ttk.Button(func_frame, text="HOME (H)", command=self.home)
-        self.home_btn.grid(row=0, column=0, padx=(0, 5), sticky=tk.EW)
-        self.root.bind('<h>', lambda event=None: self.home())
-        self.root.bind('<H>', lambda event=None: self.home())
+        home_btn = ttk.Button(func_frame, text="HOME (H)", command=self.home)
+        home_btn.grid(row=0, column=0, padx=(0, 5), sticky=tk.EW)
+        self.root.bind('<h>', lambda event=None: self.home()) # Phím tắt
+        self.root.bind('<H>', lambda event=None: self.home()) # Phím tắt (Shift+h)
 
-        self.calibrate_btn = ttk.Button(func_frame, text="Calib 90,90", command=self.calibrate_position)
-        self.calibrate_btn.grid(row=0, column=1, padx=5, sticky=tk.EW)
+        # Thêm nút Calibrate
+        calibrate_btn = ttk.Button(func_frame, text="Calib 90,90", command=self.calibrate_position)
+        calibrate_btn.grid(row=0, column=1, padx=5, sticky=tk.EW)
 
         stop_btn = ttk.Button(func_frame, text="DỪNG KHẨN CẤP", command=self.emergency_stop, style="Emergency.TButton")
         stop_btn.grid(row=0, column=2, padx=(5, 0), sticky=tk.EW)
 
+
         # --- Khung G-code ---
         gcode_frame = ttk.LabelFrame(control_panel, text="Điều khiển G-Code", padding=10)
         gcode_frame.grid(row=2, column=0, sticky=tk.NSEW, pady=(0, 10))
-        gcode_frame.columnconfigure(0, weight=1)
+        gcode_frame.columnconfigure(0, weight=1) # Cho text và progress bar giãn
 
+        # Tải file
         load_frame = ttk.Frame(gcode_frame)
         load_frame.grid(row=0, column=0, sticky=tk.EW, pady=(0, 5))
-        load_frame.columnconfigure(1, weight=1)
+        load_frame.columnconfigure(1, weight=1) # Cho label giãn
 
         load_btn = ttk.Button(load_frame, text="Tải G-Code", command=self.load_gcode)
         load_btn.grid(row=0, column=0, padx=(0, 10))
 
-        self.file_label = ttk.Label(load_frame, text="Chưa tải file", anchor=tk.W, relief="sunken", padding=(2, 1))
+        self.file_label = ttk.Label(load_frame, text="Chưa tải file", anchor=tk.W, relief="sunken", padding=(2, 1)) # Thêm hiệu ứng
         self.file_label.grid(row=0, column=1, sticky=tk.EW)
 
+        # Khung hiển thị G-code
         code_view_frame = ttk.Frame(gcode_frame)
         code_view_frame.grid(row=1, column=0, sticky=tk.NSEW, pady=(0, 5))
-        code_view_frame.rowconfigure(0, weight=1)
-        code_view_frame.columnconfigure(0, weight=1)
+        code_view_frame.rowconfigure(0, weight=1)    # Cho text giãn theo chiều dọc
+        code_view_frame.columnconfigure(0, weight=1) # Cho text giãn theo chiều ngang
 
-        self.gcode_text = scrolledtext.ScrolledText(code_view_frame, height=8, wrap=tk.NONE, borderwidth=1,
-                                                    relief="sunken",
-                                                    font=("Courier New", 9))
+        # Sử dụng scrolledtext thay vì Text + Scrollbar thủ công
+        self.gcode_text = scrolledtext.ScrolledText(code_view_frame, height=8, wrap=tk.NONE, borderwidth=1, relief="sunken",
+                                                    font=("Courier New", 9)) # Đổi font dễ đọc code
         self.gcode_text.grid(row=0, column=0, sticky=tk.NSEW)
+        # Không cần tạo và grid scrollbar riêng
 
+        # Điều khiển G-code (Run, Pause, Stop)
         gcode_ctrl_frame = ttk.Frame(gcode_frame)
         gcode_ctrl_frame.grid(row=3, column=0, sticky=tk.EW, pady=(5, 5))
         gcode_ctrl_frame.columnconfigure(0, weight=1)
@@ -646,63 +641,66 @@ class ScaraGUI:
         self.stop_gcode_btn = ttk.Button(gcode_ctrl_frame, text="Dừng", command=self.stop_gcode, state=tk.DISABLED)
         self.stop_gcode_btn.grid(row=0, column=2, padx=(5, 0), sticky=tk.EW)
 
-        self.progress_var = tk.DoubleVar()
+        # Tiến trình G-code
+        self.progress_var = tk.DoubleVar() # Dùng DoubleVar cho mượt hơn
         progress_bar = ttk.Progressbar(gcode_frame, variable=self.progress_var, maximum=100, mode='determinate')
         progress_bar.grid(row=4, column=0, sticky=tk.EW, pady=(0, 2))
 
         self.progress_label = ttk.Label(gcode_frame, text="0.0% hoàn thành")
         self.progress_label.grid(row=5, column=0, sticky=tk.EW)
 
+        # Delay G-code
         delay_frame = ttk.Frame(gcode_frame)
         delay_frame.grid(row=6, column=0, sticky=tk.EW, pady=(5, 0))
         ttk.Label(delay_frame, text="Chờ giữa lệnh (s):").pack(side=tk.LEFT, padx=(0, 5))
-        self.gcode_delay_var = tk.DoubleVar(value=0.01)
-        delay_spinbox = ttk.Spinbox(delay_frame, from_=0.00, to=2.0, increment=0.01,
+        self.gcode_delay_var = tk.DoubleVar(value=0.01) # Giảm delay mặc định từ 0.05
+        delay_spinbox = ttk.Spinbox(delay_frame, from_=0.00, to=2.0, increment=0.01, # Cho phép delay 0
                                     textvariable=self.gcode_delay_var, width=5)
         delay_spinbox.pack(side=tk.LEFT)
 
         # --- Khung Log ---
         log_frame = ttk.LabelFrame(control_panel, text="Nhật ký", padding=10)
         log_frame.grid(row=3, column=0, sticky=tk.NSEW, pady=(0, 0))
-        log_frame.rowconfigure(0, weight=1)
-        log_frame.columnconfigure(0, weight=1)
+        log_frame.rowconfigure(0, weight=1)    # Cho text giãn theo chiều dọc
+        log_frame.columnconfigure(0, weight=1) # Cho text giãn theo chiều ngang
+        # Cho phép khung log co giãn
         control_panel.rowconfigure(3, weight=1)
 
+        # Sử dụng scrolledtext cho Log
         self.log_text = scrolledtext.ScrolledText(log_frame, height=5, wrap=tk.WORD, borderwidth=1, relief="sunken",
-                                                  font=("Segoe UI", 9), state=tk.DISABLED)
+                                                  font=("Segoe UI", 9), state=tk.DISABLED) # Bắt đầu với state DISABLED
         self.log_text.grid(row=0, column=0, sticky=tk.NSEW)
+        # Configure tags for different log levels
         self.log_text.tag_configure("INFO", foreground="black")
         self.log_text.tag_configure("WARNING", foreground="orange")
         self.log_text.tag_configure("ERROR", foreground="red", font=("Segoe UI", 9, "bold"))
         self.log_text.tag_configure("DEBUG", foreground="gray")
         self.log_text.tag_configure("SENT", foreground="blue")
         self.log_text.tag_configure("RECEIVED", foreground="green")
-        self.log_text.tag_configure("SUCCESS", foreground="dark green")
+        self.log_text.tag_configure("SUCCESS", foreground="dark green") # Thêm tag SUCCESS
 
         # === Bố cục trong Display Panel ===
-        display_panel.rowconfigure(0, weight=1)
-        display_panel.columnconfigure(0, weight=1)
+        display_panel.rowconfigure(0, weight=1) # Cho canvas giãn
+        display_panel.columnconfigure(0, weight=1) # Cho canvas giãn
 
         # --- Khung Visualization ---
-        canvas_ui_frame = ttk.Frame(display_panel)
+        canvas_ui_frame = ttk.Frame(display_panel) # Frame chứa canvas và các nút liên quan
         canvas_ui_frame.grid(row=0, column=0, sticky=tk.NSEW)
         canvas_ui_frame.rowconfigure(0, weight=1)
         canvas_ui_frame.columnconfigure(0, weight=1)
 
-        # --- GỌI setup_plot SAU KHI canvas_ui_frame ĐÃ ĐƯỢC ĐỊNH NGHĨA ---
-        self.setup_plot(canvas_ui_frame)  # Truyền canvas_ui_frame vào
-        # --- KẾT THÚC GỌI setup_plot ---
-
-        # Canvas Matplotlib (widget đã được tạo trong setup_plot)
-        # self.canvas_widget đã được gán trong setup_plot
-        self.canvas_widget.grid(row=0, column=0, sticky=tk.NSEW)  # Grid widget ở đây
+        # Canvas Matplotlib
+        self.fig = plt.figure(figsize=(7, 6)) # Điều chỉnh kích thước nếu cần
+        self.ax = self.fig.add_subplot(111)
+        self.canvas = FigureCanvasTkAgg(self.fig, master=canvas_ui_frame)
+        canvas_widget = self.canvas.get_tk_widget()
+        canvas_widget.grid(row=0, column=0, sticky=tk.NSEW)
 
         # Frame chứa các nút điều khiển visualization
         vis_ctrl_frame = ttk.Frame(canvas_ui_frame)
         vis_ctrl_frame.grid(row=1, column=0, sticky=tk.EW, pady=(5, 0))
 
-        self.workspace_btn = ttk.Button(vis_ctrl_frame, text="Hiện/Ẩn Vùng làm việc",
-                                        command=self.toggle_workspace_visualization)
+        self.workspace_btn = ttk.Button(vis_ctrl_frame, text="Hiện/Ẩn Vùng làm việc", command=self.toggle_workspace_visualization) # Đổi tên biến
         self.workspace_btn.pack(side=tk.LEFT, padx=5)
 
         clear_drawing_btn = ttk.Button(vis_ctrl_frame, text="Xóa Hình Vẽ", command=self.clear_drawing)
@@ -734,63 +732,42 @@ class ScaraGUI:
         style = ttk.Style()
         style.configure("Emergency.TButton", foreground="white", background="red", font=("Segoe UI", 10, "bold"))
 
-        # Cập nhật hiển thị trạng thái ban đầu
-        self.update_position_display()
+        # Khởi tạo visualization plot
+        self.setup_plot()
+        self.update_position_display() # Cập nhật hiển thị trạng thái ban đầu
 
-    def setup_plot(self, master_frame):  # Thêm tham số master_frame
-        """Khởi tạo hoặc vẽ lại nền cho visualization plot với lưới vuông."""
-        if hasattr(self, 'canvas_widget'):
-            # Cần xóa widget cũ trước khi hủy figure và tạo mới
-            self.canvas_widget.destroy()
-        if hasattr(self, 'fig'):
-            plt.close(self.fig)
-
-        # --- Đặt kích thước figure là vuông ---
-        self.fig = plt.figure(figsize=(7, 7))  # Kích thước vuông
-        # --- Kết thúc đặt kích thước figure ---
-
-        self.ax = self.fig.add_subplot(111)
-        self.ax.clear()
+    def setup_plot(self):
+        """Khởi tạo hoặc vẽ lại nền cho visualization plot."""
+        self.ax.clear() # Xóa hoàn toàn trục
 
         bounds = self.robot.workspace_bounds
         padding = 5
 
-        # --- Tính toán phạm vi trục để lưới vuông ---
-        x_min_internal = bounds['left'] - padding
-        x_max_internal = bounds['right'] + padding
-        x_range_internal = x_max_internal - x_min_internal
-        y_min_visible = 0 - padding
-        y_max_visible = bounds['top'] + padding
-        y_range_visible = y_max_visible - y_min_visible
-        max_range = max(x_range_internal, y_range_visible)
-        x_center_internal = (x_min_internal + x_max_internal) / 2
-        y_center_visible = (0 + bounds['top']) / 2
-        new_x_min_internal = x_center_internal - max_range / 2
-        new_x_max_internal = x_center_internal + max_range / 2
-        new_y_min = y_center_visible - max_range / 2
-        new_y_max = y_center_visible + max_range / 2
-
-        self.ax.set_xlim(-(new_x_max_internal), -(new_x_min_internal))
-        self.ax.set_ylim(new_y_min, new_y_max)
-        # --- Kết thúc tính toán phạm vi trục ---
-
-        self.ax.set_xlabel("X (cm) - Flipped Display")
+        # --- LẬT GIỚI HẠN TRỤC X VÀ ĐIỂM TĨNH ---
+        # Đảo ngược giới hạn X để trục X dương hiển thị bên trái
+        self.ax.set_xlim(-(bounds['right'] + padding), -(bounds['left'] - padding))
+        # Giữ nguyên Y, có thể giới hạn Y > 0 nếu muốn
+        # self.ax.set_ylim(bounds['bottom'] - padding, bounds['top'] + padding)
+        self.ax.set_ylim(0 - padding, bounds['top'] + padding) # Chỉ hiển thị Y >= 0
+        self.ax.set_xlabel("X (cm) - Flipped Display") # Ghi chú trục bị lật
         self.ax.set_ylabel("Y (cm)")
         self.ax.set_title("SCARA Robot Visualization")
         self.ax.grid(True, linestyle='--', alpha=0.6)
         self.ax.set_aspect('equal', adjustable='box')
 
         # Vẽ vị trí các motor tĩnh với X đã lật
-        x1_vis = -self.robot.robot_params['x1']
+        x1_vis = -self.robot.robot_params['x1'] # Lật X của motor 1
         y1 = self.robot.robot_params['y1']
-        x5_vis = -self.robot.robot_params['x5']
+        x5_vis = -self.robot.robot_params['x5'] # Lật X của motor 2
         y5 = self.robot.robot_params['y5']
         self.ax.plot(x1_vis, y1, 'ks', markersize=8, label='Motor 1 (Y)')
         self.ax.plot(x5_vis, y5, 'ks', markersize=8, label='Motor 2 (X)')
+        # Tùy chỉnh vị trí text nếu cần
         self.ax.text(x1_vis + 1, y1 + 1, "M1(Y)", fontsize=8, color='black', ha='left', va='bottom')
         self.ax.text(x5_vis + 1, y5 + 1, "M2(X)", fontsize=8, color='black', ha='left', va='bottom')
+        # --- KẾT THÚC LẬT ---
 
-        # Khởi tạo các thành phần động
+        # --- Khởi tạo các thành phần động (sẽ được cập nhật trong update_animation) ---
         self.arm1_line, = self.ax.plot([], [], 'b-', lw=5, alpha=0.7, label='Arm 1-2', solid_capstyle='round')
         self.arm2_line, = self.ax.plot([], [], 'g-', lw=5, alpha=0.7, label='Arm 2-3', solid_capstyle='round')
         self.arm3_line, = self.ax.plot([], [], 'g-', lw=5, alpha=0.7, solid_capstyle='round')
@@ -799,32 +776,28 @@ class ScaraGUI:
         self.effector, = self.ax.plot([], [], 'o', color='magenta', markersize=10, label='Effector')
         self.trace_line, = self.ax.plot([], [], '-', color='red', lw=1.5, label='Drawing Trace')
 
-        # Đặt vị trí text dựa trên giới hạn MỚI đã tính toán
-        text_x_pos_vis = -(new_x_max_internal) + max_range * 0.02
-        text_y_pos_vis = new_y_max - max_range * 0.02
-        self.angle_text = self.ax.text(text_x_pos_vis, text_y_pos_vis, "", fontsize=9, ha='left', va='top',
+        # --- Đặt vị trí text dựa trên giới hạn đã lật ---
+        # Đặt ở góc trên bên trái của plot (dựa trên giới hạn X đã lật)
+        text_x_pos = -(bounds['right'] + padding * 0.8) # Gần cạnh trái của plot
+        text_y_pos = bounds['top'] + padding * 0.8     # Gần cạnh trên của plot
+        self.angle_text = self.ax.text(text_x_pos, text_y_pos, "", fontsize=9, ha='left', va='top',
                                        bbox=dict(boxstyle='round,pad=0.3', fc='white', alpha=0.7, ec='none'))
-        self.pen_status_text = self.ax.text(text_x_pos_vis, text_y_pos_vis - 3.0, "", fontsize=9, ha='left', va='top',
+        self.pen_status_text = self.ax.text(text_x_pos, text_y_pos - 3.0, "", fontsize=9, ha='left', va='top',
                                             bbox=dict(boxstyle='round,pad=0.3', fc='white', alpha=0.7, ec='none'))
+        # --- KẾT THÚC ĐẶT VỊ TRÍ TEXT ---
 
+        # Hiển thị legend (tùy chọn)
         # self.ax.legend(loc='upper right', fontsize='small')
 
-        self.fig.tight_layout()
-        # Tạo FigureCanvasTkAgg với master_frame được truyền vào
-        self.canvas = FigureCanvasTkAgg(self.fig, master=master_frame)
-        # Lưu tham chiếu widget để xóa sau này (quan trọng)
-        self.canvas_widget = self.canvas.get_tk_widget()
-        # Không grid widget ở đây
-
+        self.fig.tight_layout() # Tự động điều chỉnh layout
         self.canvas.draw()
 
-        # Reset cờ và xóa scatter cũ
+        # Reset cờ hiển thị workspace và xóa scatter cũ nếu có
         self._workspace_visualization_active = False
         if hasattr(self, 'workspace_scatter'):
             try:
                 self.workspace_scatter.remove()
-            except ValueError:
-                pass
+            except ValueError: pass
             del self.workspace_scatter
 
     def toggle_workspace_visualization(self):
@@ -1016,6 +989,7 @@ class ScaraGUI:
             self.connect() # Gọi hàm connect mới
 
     # --- TÁCH HÀM connect VÀ disconnect ---
+    # --- THAY THẾ HÀM connect CŨ BẰNG HÀM NÀY ---
     def connect(self):
         """Thực hiện kết nối với Arduino và xác nhận phản hồi ban đầu."""
         port = self.port_var.get()
@@ -1124,6 +1098,9 @@ class ScaraGUI:
             self.log(f"❌ Lỗi không xác định: {e}", tag="ERROR")
             messagebox.showerror("Lỗi Kết Nối", f"Lỗi không xác định:\n{e}")
             self.disconnect(silent=True)
+
+    # --- CÁC HÀM KHÁC GIỮ NGUYÊN ---
+    # ... (disconnect, _read_serial_loop, send_command, _execute_command, etc.) ...
 
     def disconnect(self, silent=False):
         """Thực hiện ngắt kết nối."""
@@ -1242,39 +1219,6 @@ class ScaraGUI:
                 break
         logging.info("Thread đọc Serial kết thúc.")
 
-    def update_position_from_xy(self, final_x, final_y):
-        """Cập nhật trạng thái Python dựa trên tọa độ XY cuối cùng nhận từ Arduino."""
-        self.current_position['x'] = final_x
-        self.current_position['y'] = final_y
-        logging.info(f"Cập nhật trạng thái cuối từ Arduino XY: Pos=({final_x:.2f}, {final_y:.2f})")
-
-        # Tính toán lại góc tương ứng từ XY cuối cùng bằng IK
-        # Sử dụng cấu hình hiện tại làm ưu tiên
-        calculated_theta1, calculated_theta2, selected_config = self.robot.inverse_kinematics(
-            final_x, final_y, self.current_config
-        )
-
-        if calculated_theta1 is not None and calculated_theta2 is not None:
-            self.current_angles['theta1'] = calculated_theta1
-            self.current_angles['theta2'] = calculated_theta2
-            # Cập nhật cấu hình nếu IK chọn cấu hình khác
-            if selected_config != self.current_config:
-                self._update_ik_config(selected_config) # Cập nhật cấu hình và UI label
-            logging.info(f"Góc tính toán từ XY cuối: Angles=({calculated_theta1:.2f}, {calculated_theta2:.2f}), Config={selected_config}")
-        else:
-            # Nếu IK lỗi (không nên xảy ra nếu XY hợp lệ), chỉ ghi log cảnh báo
-            logging.warning(f"Không thể tính IK cho tọa độ XY cuối cùng ({final_x:.2f}, {final_y:.2f}) nhận từ Arduino.")
-            # Giữ nguyên self.current_angles cũ
-
-        # Cập nhật toàn bộ hiển thị UI và animation dựa trên trạng thái mới
-        self.update_position_display()
-        self.update_animation()
-
-    # --- Hàm update_position_and_config giữ nguyên (có thể không dùng nữa nếu chỉ nhận XY) ---
-    # def update_position_and_config(self, final_theta1, final_theta2, final_config):
-    #     """Cập nhật trạng thái góc, cấu hình và tính toán lại vị trí XY cuối cùng."""
-    #     # ... (code cũ) ...
-
     def send_command(self, command, wait_for_response=True):
         """Thêm lệnh vào hàng đợi để gửi đến Arduino."""
         if not self.is_connected or not self.serial or not self.serial.is_open:
@@ -1290,167 +1234,125 @@ class ScaraGUI:
         logging.debug(f"Đã thêm vào queue: '{command}', Wait={wait_for_response}, Move={is_move_cmd}")
         return True
 
+    # --- SỬA LẠI _execute_command ---
     def _execute_command(self, command, wait_for_response, is_move_cmd):
-        """Thực thi lệnh gửi đến Arduino và xử lý phản hồi (chạy trong thread riêng)."""
+        """Thực thi lệnh gửi đến Arduino và chờ phản hồi (chạy trong thread xử lý queue)."""
         command_start_time = time.time()
-        final_x, final_y = None, None  # Khởi tạo biến để lưu XY cuối
+        ok_received = False
+        move_complete_received = False
+        error_received = False
 
         try:
-            self.log(f"-> {command}", tag="SENT")  # Log lệnh gửi đi
+            self.log(f"-> {command}", tag="SENT") # Log lệnh gửi đi
             cmd_bytes = (command.strip() + '\n').encode('utf-8')
 
-            # --- Gửi lệnh (có khóa) ---
+            # Gửi lệnh (có khóa)
             with self.serial_lock:
-                # self.serial.reset_input_buffer() # Cân nhắc xóa buffer trước khi gửi?
+                if not self.serial or not self.serial.is_open:
+                     logging.warning(f"Bỏ qua gửi lệnh '{command}' do serial không mở.")
+                     return False # Thất bại
                 self.serial.write(cmd_bytes)
-                # logging.debug(f"Đã gửi: {cmd_bytes}")
 
-            # --- Chờ và xử lý phản hồi (nếu cần) ---
+            # Chờ và xử lý phản hồi (nếu cần)
             if wait_for_response:
-                # Xác định timeout dựa trên loại lệnh
-                timeout = self.command_timeout * 2.5 if is_move_cmd else self.command_timeout
-
-                responses = []
-                move_completed_flag = False  # Cờ báo nhận được MOVE_COMPLETE
-                ok_ready_flag = False  # Cờ báo nhận được OK/READY/COMPLETE chung
-                # final_theta1, final_theta2 = None, None # Không dùng nữa
+                timeout = self.command_timeout * self.move_timeout_factor if is_move_cmd else self.command_timeout
+                # logging.debug(f"Chờ phản hồi cho '{command}' với timeout {timeout:.1f}s")
 
                 while time.time() - command_start_time < timeout:
-                    line = ""
                     try:
-                        # Đọc non-blocking với lock
-                        with self.serial_lock:
-                            if self.serial.is_open and self.serial.in_waiting > 0:  # Kiểm tra is_open
-                                line = self.serial.readline().decode('utf-8', errors='ignore').strip()
-                    except serial.SerialException as read_err:
-                        logging.error(f"Lỗi đọc Serial khi chờ phản hồi cho '{command}': {read_err}")
-                        self.log(f"⚠️ Lỗi đọc Serial: {read_err}", tag="ERROR")
-                        # Cố gắng kết nối lại nếu lỗi nghiêm trọng
-                        if "ClearCommError" in str(read_err) or "device disconnected" in str(read_err):
-                            self.root.after(0, self.reconnect)
-                        break  # Thoát vòng chờ nếu có lỗi đọc
-                    except Exception as read_generic_err:  # Bắt lỗi chung khác khi đọc
-                        logging.error(f"Lỗi không xác định khi đọc Serial cho '{command}': {read_generic_err}")
-                        self.log(f"⚠️ Lỗi đọc Serial (khác): {read_generic_err}", tag="ERROR")
-                        break
+                        # Lấy phản hồi từ response_queue (đã được đọc bởi thread khác)
+                        response = self.response_queue.get(block=True, timeout=0.1) # Chờ tối đa 0.1s
+                        # Không cần gọi _handle_arduino_response ở đây nữa vì nó chạy riêng
+                        # logging.debug(f"Response Queue nhận: '{response}' cho lệnh '{command}'")
 
-                    if line:
-                        self.log(f"<- {line}", tag="RECEIVED")  # Log phản hồi nhận được
-                        responses.append(line)
-                        self.last_response_time = time.time()  # Cập nhật thời gian phản hồi cuối
+                        # --- Phân tích các phản hồi quan trọng để quyết định KẾT THÚC CHỜ ---
+                        line_upper = response.upper()
 
-                        # --- Phân tích các phản hồi quan trọng ---
-                        line_upper = line.upper()
-
-                        # 1. Kiểm tra hoàn thành di chuyển và lấy tọa độ XY cuối
-                        # Ưu tiên phản hồi này cho lệnh di chuyển
-                        if "MOVE_COMPLETE AT:" in line_upper:
-                            # Regex vẫn dùng để lấy 2 số
-                            match = re.search(r"(-?\d+\.?\d*)\s*,\s*(-?\d+\.?\d*)", line)
-                            if match:
-                                try:
-                                    # --- THAY ĐỔI: Gán vào final_x, final_y ---
-                                    final_x = float(match.group(1))
-                                    final_y = float(match.group(2))
-                                    logging.info(f"Xác nhận hoàn thành di chuyển tại XY=({final_x:.2f}, {final_y:.2f})")
-                                    move_completed_flag = True  # Đánh dấu hoàn thành di chuyển
-                                    # --- KẾT THÚC THAY ĐỔI ---
-                                    # Không break ngay, có thể còn OK/READY sau đó
-                                except ValueError:
-                                    logging.warning(f"Không thể parse XY từ MOVE_COMPLETE: '{line}'")
-                            else:
-                                logging.warning(f"Nhận MOVE_COMPLETE nhưng không tìm thấy XY: '{line}'")
-                                # Vẫn coi là xong di chuyển nếu không parse được? (tùy chọn, hiện tại là không)
-                                # move_completed_flag = True
+                        # 1. Kiểm tra hoàn thành di chuyển
+                        if is_move_cmd and "MOVE_COMPLETE AT:" in line_upper:
+                            move_complete_received = True
+                            # Không break ngay, chờ thêm OK
 
                         # 2. Kiểm tra hoàn thành lệnh chung (OK, READY, COMPLETE)
-                        # Dùng làm điều kiện thoát chính nếu không phải lệnh di chuyển
-                        # hoặc nếu lệnh di chuyển đã báo MOVE_COMPLETE
                         if "OK" in line_upper or "READY" in line_upper or "COMPLETE" in line_upper:
-                            ok_ready_flag = True
-                            # Chỉ break nếu không phải lệnh move HOẶC lệnh move đã báo xong
-                            if not is_move_cmd or move_completed_flag:
-                                break  # Thoát vòng chờ
+                             ok_received = True
+                             # Điều kiện thoát vòng chờ:
+                             # - Lệnh không phải di chuyển: Chỉ cần OK/READY.
+                             # - Lệnh di chuyển: Cần cả MOVE_COMPLETE và OK/READY.
+                             if not is_move_cmd or move_complete_received:
+                                 # logging.debug(f"Thoát chờ cho '{command}'. MoveOK:{move_complete_received}, OK:{ok_received}")
+                                 break # Thoát vòng chờ
 
-                        # 3. Cập nhật trạng thái bút từ phản hồi (dùng after để chạy trên main thread)
-                        if "PEN_UP" in line_upper:
-                            self.root.after(0, lambda: self._update_pen_status(False))
-                        elif "PEN_DOWN" in line_upper:
-                            self.root.after(0, lambda: self._update_pen_status(True))
-
-                        # 4. Cập nhật cấu hình từ phản hồi (nếu có)
-                        if "CONFIG:" in line_upper:
-                            config_part = line.split(":")[-1].strip()
-                            if config_part:
-                                # Cập nhật trên main thread
-                                self.root.after(0, lambda cfg=config_part: self._update_ik_config(cfg))
-
-                        # 5. Xử lý lỗi từ Arduino
+                        # 3. Kiểm tra lỗi từ Arduino
                         if "ERROR" in line_upper:
-                            logging.error(f"Nhận lỗi từ Arduino cho lệnh '{command}': {line}")
-                            self.log(f"⚠️ Arduino Error: {line}", tag="ERROR")
-                            # Có thể dừng G-code nếu đang chạy?
-                            if self.gcode_running:
-                                self.root.after(0, lambda: self.stop_gcode(is_emergency=True))
-                            break  # Thoát vòng chờ khi có lỗi
+                             logging.error(f"Nhận lỗi từ Arduino cho lệnh '{command}': {response}")
+                             self.log(f"⚠️ Arduino Error: {response}", tag="ERROR")
+                             error_received = True
+                             if self.gcode_running: # Dừng G-code nếu có lỗi
+                                 self.root.after(0, lambda: self.stop_gcode(is_emergency=True))
+                             break # Thoát vòng chờ khi có lỗi
 
-                    else:
-                        # Nếu không có dữ liệu, nghỉ ngắn để tránh CPU load cao
-                        time.sleep(0.02)
+                    except queue.Empty:
+                        # Không có phản hồi trong timeout ngắn, tiếp tục chờ
+                        # Kiểm tra nếu G-code bị dừng thì thoát chờ
+                        if self.gcode_running == False and is_move_cmd: # Nếu G-code dừng trong khi chờ lệnh di chuyển
+                            logging.info(f"G-code dừng, hủy chờ lệnh '{command}'")
+                            return False # Coi như lệnh không hoàn thành
+                        continue
+                    except Exception as e:
+                         logging.exception(f"Lỗi khi lấy phản hồi từ queue cho '{command}':")
+                         error_received = True
+                         break # Thoát nếu có lỗi queue
 
                 # --- Xử lý sau khi vòng chờ kết thúc ---
                 command_duration = time.time() - command_start_time
 
-                # Kiểm tra Timeout
-                if not ok_ready_flag and wait_for_response:
-                    # Nếu là lệnh di chuyển mà chưa nhận MOVE_COMPLETE cũng coi là timeout
-                    if is_move_cmd and not move_completed_flag:
-                        self.log(f"⚠️ Timeout ({timeout:.1f}s) chờ MOVE_COMPLETE cho: '{command}'", tag="ERROR")
-                        logging.warning(f"Timeout ({timeout:.1f}s) chờ MOVE_COMPLETE cho: '{command}'")
-                    elif not is_move_cmd:
-                        self.log(f"⚠️ Timeout ({timeout:.1f}s) chờ OK/READY cho: '{command}'", tag="ERROR")
-                        logging.warning(f"Timeout ({timeout:.1f}s) chờ OK/READY cho: '{command}'")
-                    # Cân nhắc dừng G-code hoặc thử kết nối lại nếu timeout liên tục
+                if error_received:
+                    logging.warning(f"Lệnh '{command}' kết thúc do lỗi sau {command_duration:.3f}s.")
+                    return False # Thất bại
 
-                # --- THAY ĐỔI: Cập nhật vị trí và visualization SAU KHI lệnh di chuyển hoàn tất ---
-                # Sử dụng final_x, final_y
-                # Kiểm tra final_x, final_y đã được gán chưa (tránh lỗi nếu MOVE_COMPLETE không parse được)
-                if is_move_cmd and move_completed_flag and final_x is not None and final_y is not None:
-                    # Gọi hàm cập nhật mới trên main thread bằng tọa độ XY cuối nhận được
-                    self.root.after(0, lambda x=final_x, y=final_y: self.update_position_from_xy(x, y))
-                    logging.debug(
-                        f"Lệnh '{command}' hoàn thành sau {command_duration:.3f}s. Cập nhật vị trí cuối từ XY.")
-                # --- KẾT THÚC THAY ĐỔI ---
-                elif is_move_cmd and not move_completed_flag and ok_ready_flag:
-                    # Trường hợp lạ: Nhận OK nhưng không có MOVE_COMPLETE cho lệnh di chuyển
-                    # Log cảnh báo nhưng vẫn cập nhật UI dựa trên target cuối cùng gửi đi
-                    logging.warning(
-                        f"Lệnh di chuyển '{command}' nhận OK nhưng không có MOVE_COMPLETE. Vị trí có thể không chính xác.")
-                    self.root.after(0, self.update_position_display)
-                    self.root.after(0, self.update_animation)
-                elif not is_move_cmd and ok_ready_flag:
-                    # Lệnh không di chuyển hoàn thành
-                    logging.debug(f"Lệnh '{command}' hoàn thành sau {command_duration:.3f}s.")
+                # Kiểm tra Timeout
+                if not ok_received and wait_for_response:
+                    log_msg = f"⚠️ Timeout ({timeout:.1f}s) chờ OK/READY cho: '{command}'"
+                    if is_move_cmd and not move_complete_received:
+                        log_msg = f"⚠️ Timeout ({timeout:.1f}s) chờ MOVE_COMPLETE cho: '{command}'"
+                    self.log(log_msg, tag="ERROR")
+                    logging.warning(log_msg)
+                    if self.gcode_running: # Dừng G-code nếu timeout
+                         self.root.after(0, lambda: self.stop_gcode(is_emergency=True))
+                    return False # Thất bại
+
+                # Kiểm tra trường hợp lạ: OK nhưng không có MOVE_COMPLETE cho lệnh di chuyển
+                elif is_move_cmd and ok_received and not move_complete_received:
+                     log_msg = f"⚠️ Lệnh di chuyển '{command}' nhận OK nhưng thiếu MOVE_COMPLETE!"
+                     self.log(log_msg, tag="WARNING")
+                     logging.warning(log_msg)
+                     # Vẫn coi là thành công nhưng có cảnh báo
+                     return True
+
+                else: # Thành công
+                     logging.debug(f"Lệnh '{command}' hoàn thành sau {command_duration:.3f}s.")
+                     return True
+
+            else: # Không cần chờ phản hồi
+                # logging.debug(f"Đã gửi lệnh '{command}' không chờ phản hồi.")
+                return True # Coi như thành công ngay
 
         except serial.SerialTimeoutException:
             self.log(f"⚠️ Lỗi Serial Timeout khi gửi: '{command}'", tag="ERROR")
             logging.error(f"Serial Timeout khi gửi: '{command}'")
-            # Cân nhắc việc thử kết nối lại
-            # self.root.after(0, self.reconnect)
+            self.root.after(0, self.reconnect) # Thử kết nối lại
+            return False
         except serial.SerialException as e:
             self.log(f"❌ Lỗi Serial khi thực thi '{command}': {e}", tag="ERROR")
             logging.exception(f"Lỗi Serial khi thực thi '{command}':")
-            # Cố gắng kết nối lại nếu lỗi nghiêm trọng
-            if self.serial and not self.serial.is_open:  # Kiểm tra nếu port đã đóng
+            if "ClearCommError" in str(e) or "device disconnected" in str(e):
                 self.root.after(0, self.reconnect)
-            elif "ClearCommError" in str(e) or "device disconnected" in str(e):
-                self.root.after(0, self.reconnect)
+            return False
         except Exception as e:
             self.log(f"❌ Lỗi không xác định khi thực thi '{command}': {e}", tag="ERROR")
             logging.exception(f"Lỗi không xác định khi thực thi '{command}':")
-        finally:
-            # Đảm bảo cờ xử lý được reset ngay cả khi có lỗi
-            self.command_processing = False
+            return False
 
     def _update_ik_config(self, config_str):
         """Cập nhật cấu hình IK và hiển thị trên UI."""
