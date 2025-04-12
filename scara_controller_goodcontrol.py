@@ -96,7 +96,7 @@ class ScaraRobot:
 
         # Giới hạn góc
         THETA1_MIN, THETA1_MAX = -120, 150
-        THETA2_MIN, THETA2_MAX = 30, 300
+        THETA2_MIN, THETA2_MAX = 10, 300
 
         # Tính khoảng cách từ điểm vẽ đến các động cơ
         L13_sq = (x3 - x1) ** 2 + (y3 - y1) ** 2
@@ -175,10 +175,14 @@ class ScaraRobot:
         return theta1, theta2, config
 
     def check_point_in_workspace(self, x, y):
+        # Kiểm tra Y dương
+        if y < 0:
+            return False
+
         x1, y1 = self.robot_params['x1'], self.robot_params['y1']
         x5, y5 = self.robot_params['x5'], self.robot_params['y5']
 
-        # Kiểm tra khoảng cách đến động cơ
+        # Kiểm tra khoảng cách đến các động cơ
         d1_sq = (x - x1) ** 2 + (y - y1) ** 2
         d2_sq = (x - x5) ** 2 + (y - y5) ** 2
 
@@ -189,7 +193,7 @@ class ScaraRobot:
         r2_max_sq = self.r2_max ** 2
 
         if (r1_min_sq <= d1_sq <= r1_max_sq and r2_min_sq <= d2_sq <= r2_max_sq):
-            # Chỉ tính động học ngược nếu cần
+            # Kiểm tra động học ngược
             theta1, theta2, _ = self.inverse_kinematics(x, y)
             return theta1 is not None and theta2 is not None
 
