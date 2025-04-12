@@ -109,7 +109,8 @@ class CropRectangle:
         # Check if clicking on a resize handle
         for handle in self.handles[:-1]:  # Skip text label
             coords = self.canvas.coords(handle)
-            if coords[0] <= x <= coords[2] and coords[1] <= y <= coords[3]:
+            # FIX: Check if coords has enough elements before accessing them
+            if len(coords) >= 4 and coords[0] <= x <= coords[2] and coords[1] <= y <= coords[3]:
                 self.active_handle = self.canvas.gettags(handle)[0]
                 self.drag_start_x = x
                 self.drag_start_y = y
@@ -451,7 +452,7 @@ class ImageToGcodeApp:
         new_height = int(img_height * self.image_scale)
 
         # If not a processed preview image, add workspace indicators
-        if not processed and not isinstance(img, np.ndarray):
+        if not processed and isinstance(img, np.ndarray):  # FIX: Check if img is actually a numpy array
             # Add workspace boundaries visual indicators
             overlay = img_rgb.copy()
 
@@ -915,13 +916,14 @@ class ImageToGcodeApp:
                 if zigzag:  # Reverse scan direction for zigzag
                     range_x = range(width - 1, -1, -1)
 
+                # FIX: Store pixels with explicit type casting to avoid type issues
                 for x in range_x:
                     # Only draw for target pixels
                     if img_binary[y, x] == target_value:
                         real_x = offset_x + x * actual_scale
                         if custom_x_min <= real_x <= custom_x_max:
-                            # Make sure we store exactly two values - pixel x and real_x
-                            pixels_to_draw.append((x, real_x))
+                            # Store exactly two values with explicit type casting
+                            pixels_to_draw.append((int(x), float(real_x)))
 
                 # Skip if no pixels to draw
                 if not pixels_to_draw:
@@ -930,9 +932,9 @@ class ImageToGcodeApp:
                 # Build segments with explicit validation
                 current_segment = []
                 for pixel_data in pixels_to_draw:
-                    # Ensure we're only using the first two values even if there are more
-                    if len(pixel_data) >= 2:
-                        x, real_x = pixel_data[0], pixel_data[1]
+                    # FIX: Only process if pixel_data has exactly 2 elements
+                    if len(pixel_data) == 2:
+                        x, real_x = pixel_data
 
                         if not current_segment:
                             # Start new segment
@@ -942,11 +944,12 @@ class ImageToGcodeApp:
                             current_segment.append((x, real_x))
                         else:
                             # End current segment and start a new one
-                            if len(current_segment) > 0 and len(current_segment[0]) >= 2:
+                            # FIX: More validation to avoid index errors
+                            if len(current_segment) > 0 and len(current_segment[0]) == 2:
                                 start_data = current_segment[0]
                                 end_data = current_segment[-1]
 
-                                # Safe unpacking with validation
+                                # FIX: Safe unpacking with explicit indexing
                                 start_x = start_data[0]
                                 real_start_x = start_data[1]
                                 end_x = end_data[0]
@@ -965,13 +968,14 @@ class ImageToGcodeApp:
                             current_segment = [(x, real_x)]
 
                 # Process final segment with validation
+                # FIX: Added more validation to prevent IndexError
                 if current_segment and len(current_segment) > 0:
-                    # Safely access first and last elements
-                    if len(current_segment[0]) >= 2 and len(current_segment[-1]) >= 2:
+                    # FIX: Safely access first and last elements
+                    if len(current_segment[0]) == 2 and len(current_segment[-1]) == 2:
                         start_data = current_segment[0]
                         end_data = current_segment[-1]
 
-                        # Safe unpacking with validation
+                        # Use explicit indexing to avoid tuple unpacking issues
                         start_x = start_data[0]
                         real_start_x = start_data[1]
                         end_x = end_data[0]
@@ -1217,77 +1221,76 @@ class ImageToGcodeApp:
                 gcode.append(f"G1 F{drawing_speed:.0f} X{x:.2f} Y{y_min + tick_size:.2f} ; Draw tick")
                 gcode.append("M5 ; Pen up")
 
-            # Y-axis ticks
-            for y in range(int(y_min), int(y_max) + 1, 5):
-                gcode.append(f"G0 F{drawing_speed * 1.5:.0f} X{x_min:.2f} Y{y:.2f} ; Move to tick position")
-                gcode.append("M3 ; Pen down")
-                gcode.append(f"G1 F{drawing_speed:.0f} X{x_min + tick_size:.2f} Y{y:.2f} ; Draw tick")
-                gcode.append("M5 ; Pen up")
+                # Y-axis ticks
+                for y in range(int(y_min), int(y_max) + 1, 5):
+                    gcode.append(f"G0 F{drawing_speed * 1.5:.0f} X{x_min:.2f} Y{y:.2f} ; Move to tick position")
+                    gcode.append("M3 ; Pen down")
+                    gcode.append(f"G1 F{drawing_speed:.0f} X{x_min + tick_size:.2f} Y{y:.2f} ; Draw tick")
+                    gcode.append("M5 ; Pen up")
 
-            # Draw corner markers
-            marker_size = 1.0  # cm
+                    # Draw corner markers
+                    marker_size = 1.0  # cm
 
-            # Bottom-left
-            gcode.append(f"G0 F{drawing_speed * 1.5:.0f} X{x_min:.2f} Y{y_min:.2f} ; Bottom-left corner")
-            gcode.append("M3 ; Pen down")
-            gcode.append(f"G1 F{drawing_speed:.0f} X{x_min + marker_size:.2f} Y{y_min:.2f}")
-            gcode.append(f"G1 X{x_min:.2f} Y{y_min:.2f}")
-            gcode.append(f"G1 X{x_min:.2f} Y{y_min + marker_size:.2f}")
-            gcode.append("M5 ; Pen up")
+                    # Bottom-left
+                    gcode.append(f"G0 F{drawing_speed * 1.5:.0f} X{x_min:.2f} Y{y_min:.2f} ; Bottom-left corner")
+                    gcode.append("M3 ; Pen down")
+                    gcode.append(f"G1 F{drawing_speed:.0f} X{x_min + marker_size:.2f} Y{y_min:.2f}")
+                    gcode.append(f"G1 X{x_min:.2f} Y{y_min:.2f}")
+                    gcode.append(f"G1 X{x_min:.2f} Y{y_min + marker_size:.2f}")
+                    gcode.append("M5 ; Pen up")
 
-            # Bottom-right
-            gcode.append(f"G0 F{drawing_speed * 1.5:.0f} X{x_max:.2f} Y{y_min:.2f} ; Bottom-right corner")
-            gcode.append("M3 ; Pen down")
-            gcode.append(f"G1 F{drawing_speed:.0f} X{x_max - marker_size:.2f} Y{y_min:.2f}")
-            gcode.append(f"G1 X{x_max:.2f} Y{y_min:.2f}")
-            gcode.append(f"G1 X{x_max:.2f} Y{y_min + marker_size:.2f}")
-            gcode.append("M5 ; Pen up")
+                    # Bottom-right
+                    gcode.append(f"G0 F{drawing_speed * 1.5:.0f} X{x_max:.2f} Y{y_min:.2f} ; Bottom-right corner")
+                    gcode.append("M3 ; Pen down")
+                    gcode.append(f"G1 F{drawing_speed:.0f} X{x_max - marker_size:.2f} Y{y_min:.2f}")
+                    gcode.append(f"G1 X{x_max:.2f} Y{y_min:.2f}")
+                    gcode.append(f"G1 X{x_max:.2f} Y{y_min + marker_size:.2f}")
+                    gcode.append("M5 ; Pen up")
 
-            # Top-right
-            gcode.append(f"G0 F{drawing_speed * 1.5:.0f} X{x_max:.2f} Y{y_max:.2f} ; Top-right corner")
-            gcode.append("M3 ; Pen down")
-            gcode.append(f"G1 F{drawing_speed:.0f} X{x_max - marker_size:.2f} Y{y_max:.2f}")
-            gcode.append(f"G1 X{x_max:.2f} Y{y_max:.2f}")
-            gcode.append(f"G1 X{x_max:.2f} Y{y_max - marker_size:.2f}")
-            gcode.append("M5 ; Pen up")
+                    # Top-right
+                    gcode.append(f"G0 F{drawing_speed * 1.5:.0f} X{x_max:.2f} Y{y_max:.2f} ; Top-right corner")
+                    gcode.append("M3 ; Pen down")
+                    gcode.append(f"G1 F{drawing_speed:.0f} X{x_max - marker_size:.2f} Y{y_max:.2f}")
+                    gcode.append(f"G1 X{x_max:.2f} Y{y_max:.2f}")
+                    gcode.append(f"G1 X{x_max:.2f} Y{y_max - marker_size:.2f}")
+                    gcode.append("M5 ; Pen up")
 
-            # Top-left
-            gcode.append(f"G0 F{drawing_speed * 1.5:.0f} X{x_min:.2f} Y{y_max:.2f} ; Top-left corner")
-            gcode.append("M3 ; Pen down")
-            gcode.append(f"G1 F{drawing_speed:.0f} X{x_min + marker_size:.2f} Y{y_max:.2f}")
-            gcode.append(f"G1 X{x_min:.2f} Y{y_max:.2f}")
-            gcode.append(f"G1 X{x_min:.2f} Y{y_max - marker_size:.2f}")
-            gcode.append("M5 ; Pen up")
+                    # Top-left
+                    gcode.append(f"G0 F{drawing_speed * 1.5:.0f} X{x_min:.2f} Y{y_max:.2f} ; Top-left corner")
+                    gcode.append("M3 ; Pen down")
+                    gcode.append(f"G1 F{drawing_speed:.0f} X{x_min + marker_size:.2f} Y{y_max:.2f}")
+                    gcode.append(f"G1 X{x_min:.2f} Y{y_max:.2f}")
+                    gcode.append(f"G1 X{x_min:.2f} Y{y_max - marker_size:.2f}")
+                    gcode.append("M5 ; Pen up")
 
-            # Return to safe position
-            gcode.append(
-                f"G0 F{drawing_speed * 1.5:.0f} X{center_x:.2f} Y{y_max - 2:.2f} ; Move to safe position")
-            gcode.append("M5 ; Ensure pen is up")
-            gcode.append("; End of reference frame G-code")
+                    # Return to safe position
+                    gcode.append(
+                        f"G0 F{drawing_speed * 1.5:.0f} X{center_x:.2f} Y{y_max - 2:.2f} ; Move to safe position")
+                    gcode.append("M5 ; Ensure pen is up")
+                    gcode.append("; End of reference frame G-code")
 
-            # Save to file
-            file_path = filedialog.asksaveasfilename(
-                title="Save Reference Frame G-code",
-                defaultextension=".gcode",
-                filetypes=[
-                    ("G-code files", "*.gcode"),
-                    ("Text files", "*.txt"),
-                    ("All files", "*.*")
-                ]
-            )
+                    # Save to file
+                    file_path = filedialog.asksaveasfilename(
+                        title="Save Reference Frame G-code",
+                        defaultextension=".gcode",
+                        filetypes=[
+                            ("G-code files", "*.gcode"),
+                            ("Text files", "*.txt"),
+                            ("All files", "*.*")
+                        ]
+                    )
 
-            if not file_path:
-                return
+                    if not file_path:
+                        return
 
-            with open(file_path, 'w', encoding='ascii', errors='ignore') as f:
-                f.write('\n'.join(gcode))
+                    with open(file_path, 'w', encoding='ascii', errors='ignore') as f:
+                        f.write('\n'.join(gcode))
 
-            self.status_var.set(f"Reference frame G-code saved to {os.path.basename(file_path)}")
-            messagebox.showinfo("Success", f"Reference frame G-code saved to {file_path}")
+                    self.status_var.set(f"Reference frame G-code saved to {os.path.basename(file_path)}")
+                    messagebox.showinfo("Success", f"Reference frame G-code saved to {file_path}")
 
         except Exception as e:
             messagebox.showerror("Error", f"Cannot save reference frame: {str(e)}")
-
 
 if __name__ == "__main__":
     root = tk.Tk()
