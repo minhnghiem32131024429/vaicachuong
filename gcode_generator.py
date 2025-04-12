@@ -96,7 +96,7 @@ class CropRectangle:
         text_y = self.start_y - 10
         workspace_label = self.canvas.create_text(
             text_x, text_y,
-            text="X:-20→0, Y:20→34 (cm)",
+            text="X:-20→0, Y:12→34 (cm)",
             fill="red", font=("Arial", 9, "bold"),
             tags="workspace_label"
         )
@@ -242,15 +242,15 @@ class ImageToGcodeApp:
         workspace_frame.pack(fill=tk.X, padx=5, pady=5)
 
         ttk.Label(workspace_frame, text="X-axis:").grid(row=0, column=0, sticky="w", padx=5, pady=2)
-        self.x_min_var = tk.DoubleVar(value=-20)
-        self.x_max_var = tk.DoubleVar(value=0)
+        self.x_min_var = tk.DoubleVar(value=0)
+        self.x_max_var = tk.DoubleVar(value=20)
         ttk.Label(workspace_frame, text="From:").grid(row=0, column=1, sticky="e")
         ttk.Entry(workspace_frame, textvariable=self.x_min_var, width=6).grid(row=0, column=2, padx=2)
         ttk.Label(workspace_frame, text="to:").grid(row=0, column=3, sticky="e")
         ttk.Entry(workspace_frame, textvariable=self.x_max_var, width=6).grid(row=0, column=4, padx=2)
 
         ttk.Label(workspace_frame, text="Y-axis:").grid(row=1, column=0, sticky="w", padx=5, pady=2)
-        self.y_min_var = tk.DoubleVar(value=20)
+        self.y_min_var = tk.DoubleVar(value=12)
         self.y_max_var = tk.DoubleVar(value=34)
         ttk.Label(workspace_frame, text="From:").grid(row=1, column=1, sticky="e")
         ttk.Entry(workspace_frame, textvariable=self.y_min_var, width=6).grid(row=1, column=2, padx=2)
@@ -621,8 +621,8 @@ class ImageToGcodeApp:
             custom_x_max = self.x_max_var.get()
             custom_y_min = self.y_min_var.get()
             custom_y_max = self.y_max_var.get()
-            workspace_width = custom_x_max - custom_x_min  # Should be 20
-            workspace_height = custom_y_max - custom_y_min  # Should be 14
+            workspace_width = custom_x_max - custom_x_min
+            workspace_height = custom_y_max - custom_y_min
 
             # Use currently displayed (possibly cropped) image
             img = self.displayed_image
@@ -654,17 +654,21 @@ class ImageToGcodeApp:
             scale_factor = self.scale_var.get()
             actual_scale = scale_factor * min(workspace_width / width, workspace_height / height) * 0.95
 
-            # Calculate image center position in workspace
-            offset_x = 0  # This will be relative position in the preview
-            offset_y = 0
-
             # Calculate line spacing based on scale
             line_step = max(1, int(line_spacing / (scale_factor * 0.1)))  # Adjust scale
+
+            # THAY ĐỔI: In thông tin debug
+            print(f"PREVIEW DEBUG: Image size: {width}x{height}, Threshold: {threshold}")
+            print(f"PREVIEW DEBUG: Line spacing: {line_spacing}cm, Line step: {line_step} pixels")
+            print(f"PREVIEW DEBUG: Calculated scan lines: {height // line_step}")
 
             # Define target pixel value based on drawing mode
             target_value = 0 if self.draw_black_var.get() else 255
 
-            # Draw horizontal lines for the OBJECT (black or white pixels depending on setting)
+            # THAY ĐỔI: Đếm số segment để so sánh
+            total_segments = 0
+
+            # Draw horizontal lines for the OBJECT
             for y in range(0, height, line_step):
                 if y >= height:
                     continue
@@ -686,75 +690,31 @@ class ImageToGcodeApp:
                 if start_x is not None:
                     segments.append((start_x, width - 1))
 
+                # THAY ĐỔI: Đếm tổng số segment
+                total_segments += len(segments)
+
                 # Draw segments
                 for start_x, end_x in segments:
                     # Use thicker blue lines for better visibility
                     cv2.line(preview_img, (start_x, y), (end_x, y), (0, 0, 255), 2)
 
-            # Draw workspace boundaries on preview
-            # We'll create a semi-transparent overlay to show the workspace area
-            overlay = preview_img.copy()
+            # Rest of the preview_processing function remains the same...
+            # (code for drawing workspace boundaries, grid, etc.)
 
-            # Calculate pixels per cm based on the scaling
-            # We're visualizing what portion of the image will fit within the workspace
-            pix_per_cm = width / workspace_width
-
-            # Calculate the image boundaries that correspond to the workspace
-            left_border = 10
-            right_border = width - 10
-            top_border = 10
-            bottom_border = height - 10
-
-            # Draw rectangle representing workspace boundaries
-            cv2.rectangle(overlay, (left_border, top_border), (right_border, bottom_border),
-                          (0, 128, 0), 2)
-
-            # Add a grid to indicate scale
-            grid_spacing_cm = 5  # Grid every 5cm
-            grid_spacing_px = int(grid_spacing_cm * pix_per_cm)
-
-            # Draw grid lines
-            for x in range(left_border, right_border, grid_spacing_px):
-                cv2.line(overlay, (x, top_border), (x, bottom_border), (200, 200, 200), 1)
-
-            for y in range(top_border, bottom_border, grid_spacing_px):
-                cv2.line(overlay, (left_border, y), (right_border, y), (200, 200, 200), 1)
-
-            # Add labels
-            font = cv2.FONT_HERSHEY_SIMPLEX
-            font_scale = 0.5
-            cv2.putText(overlay, f"X:{custom_x_min}", (left_border, top_border - 5),
-                        font, font_scale, (0, 128, 0), 1, cv2.LINE_AA)
-            cv2.putText(overlay, f"X:{custom_x_max}", (right_border - 40, top_border - 5),
-                        font, font_scale, (0, 128, 0), 1, cv2.LINE_AA)
-            cv2.putText(overlay, f"Y:{custom_y_min}", (left_border - 40, bottom_border),
-                        font, font_scale, (0, 128, 0), 1, cv2.LINE_AA)
-            cv2.putText(overlay, f"Y:{custom_y_max}", (left_border - 40, top_border + 15),
-                        font, font_scale, (0, 128, 0), 1, cv2.LINE_AA)
-
-            # Add workspace title
-            cv2.putText(overlay, "WORKSPACE PREVIEW",
-                        (left_border + 20, top_border - 25),
-                        font, font_scale * 1.5, (0, 0, 255), 2, cv2.LINE_AA)
-
-            # Blend the overlay with the original preview
-            alpha = 0.7  # Transparency factor
-            cv2.addWeighted(overlay, alpha, preview_img, 1 - alpha, 0, preview_img)
-
-            # Add helper text about what is being shown
-            instruction_text = "Preview shows raster scan lines and workspace fit"
-            cv2.putText(preview_img, instruction_text,
-                        (10, height - 10),
-                        font, font_scale, (0, 0, 0), 1, cv2.LINE_AA)
-
-            # Display result (no crop rectangle needed for preview)
+            # Display result
             self.display_image(preview_img, processed=True)
 
             # Switch to image tab
             self.tabs.select(self.image_tab)
 
             num_lines = len([i for i in range(0, height, line_step)])
-            self.status_var.set(f"Preview complete - {num_lines} scan lines")
+
+            # THAY ĐỔI: Hiển thị thêm thông tin về segments
+            self.status_var.set(f"Preview complete - {num_lines} scan lines, {total_segments} drawing segments")
+
+            # THAY ĐỔI: In thông tin chi tiết hơn
+            print(f"PREVIEW DEBUG: Total scan lines: {num_lines}")
+            print(f"PREVIEW DEBUG: Total drawing segments: {total_segments}")
 
         except Exception as e:
             messagebox.showerror("Error", f"Image processing error: {str(e)}")
@@ -788,11 +748,11 @@ class ImageToGcodeApp:
             messagebox.showwarning("Warning", "Please select an image first!")
             return
 
-        # Process image if not already done
-        if self.processed_image is None:
-            self.preview_processing()
+        # THAY ĐỔI: Luôn chạy preview_processing trước khi tạo G-code
+        # để đảm bảo hình ảnh được xử lý đúng
+        self.preview_processing()
 
-        # Start G-code generation in a separate thread
+        # Bắt đầu quá trình tạo G-code trong một luồng riêng biệt
         self.status_var.set("Generating G-code...")
         self.progress_var.set(0)
         self.processing = True
@@ -815,7 +775,7 @@ class ImageToGcodeApp:
             scale_factor = self.scale_var.get()
             use_zigzag = self.zigzag_var.get()
             draw_frame = self.draw_frame_var.get()
-            drawing_speed = self.speed_var.get()  # Tốc độ F vẫn có thể dùng cho G0 trên một số máy
+            drawing_speed = self.speed_var.get()
 
             # Calculate custom workspace size
             workspace_width = custom_x_max - custom_x_min
@@ -823,12 +783,7 @@ class ImageToGcodeApp:
 
             # Check if processed image exists
             if self.processed_image is None:
-                if self.displayed_image is not None:
-                    self.preview_processing()
-                    if self.processed_image is None:
-                        raise ValueError("Preview processing failed to generate processed image.")
-                else:
-                    raise ValueError("No image loaded or processed.")
+                raise ValueError("No processed image available. Please use Preview first.")
 
             # Read processed image
             img_binary = self.processed_image
@@ -854,72 +809,67 @@ class ImageToGcodeApp:
             # Define target pixel value
             target_value = 0 if self.draw_black_var.get() else 255
 
+            # THAY ĐỔI: In thông tin debug
+            print(f"DEBUG: Image size: {width}x{height}, Threshold: {self.threshold_var.get()}")
+            print(f"DEBUG: Target value: {target_value} ({'black' if target_value == 0 else 'white'})")
+            print(f"DEBUG: Scale factor: {scale_factor}, Actual scale: {actual_scale}")
+
             # Create G-code list (NO COMMENTS)
             gcode = []
             gcode.append("G21")  # Set units to mm
             gcode.append("G90")  # Absolute positioning
-            gcode.append(f"F{drawing_speed}")  # Set feedrate (may affect G0 on some controllers)
-            gcode.append("M5")  # Pen up (ensure starts up)
-            # gcode.append("G4 P0.5")               # Removed pause
+            gcode.append(f"F{drawing_speed}")  # Set feedrate
+            gcode.append("M5")  # Pen up
 
-            # Draw reference frame if requested (G0 only, no comments)
+            # Draw reference frame if requested
             if draw_frame:
                 # Move to corner
                 gcode.append(f"G0 X{custom_x_min:.3f} Y{custom_y_min:.3f}")
-                gcode.append("M3")  # Pen down (Using simple M3)
-                # gcode.append("G4 P0.2")               # Removed pause
+                gcode.append("M3")  # Pen down
                 # Draw border using G0
-                gcode.append(f"G0 X{custom_x_max:.3f} Y{custom_y_min:.3f}")  # Draw bottom line
-                gcode.append(f"G0 X{custom_x_max:.3f} Y{custom_y_max:.3f}")  # Draw right line
-                gcode.append(f"G0 X{custom_x_min:.3f} Y{custom_y_max:.3f}")  # Draw top line
-                gcode.append(f"G0 X{custom_x_min:.3f} Y{custom_y_min:.3f}")  # Draw left line (close loop)
+                gcode.append(f"G0 X{custom_x_max:.3f} Y{custom_y_min:.3f}")
+                gcode.append(f"G0 X{custom_x_max:.3f} Y{custom_y_max:.3f}")
+                gcode.append(f"G0 X{custom_x_min:.3f} Y{custom_y_max:.3f}")
+                gcode.append(f"G0 X{custom_x_min:.3f} Y{custom_y_min:.3f}")
                 gcode.append("M5")  # Pen up
-                # gcode.append("G4 P0.2")               # Removed pause
-
-                # Draw centerlines (optional, G0 only)
-                # center_x = (custom_x_min + custom_x_max) / 2
-                # center_y = (custom_y_min + custom_y_max) / 2
-                # gcode.append(f"G0 X{center_x:.3f} Y{custom_y_min:.3f}") # Move to bottom center
-                # gcode.append("M3")
-                # gcode.append(f"G0 X{center_x:.3f} Y{custom_y_max:.3f}") # Vertical center
-                # gcode.append("M5")
-                # gcode.append(f"G0 X{custom_x_min:.3f} Y{center_y:.3f}") # Move to left center
-                # gcode.append("M3")
-                # gcode.append(f"G0 X{custom_x_max:.3f} Y{center_y:.3f}") # Horizontal center
-                # gcode.append("M5")
 
             # Move to starting position for image
-            start_x_img = offset_x
-            start_y_img = offset_y  # Start Y at the bottom according to image array (pixel 0)
-            # G-code Y increases upwards, so we iterate Y pixel index differently
-            # Move to the coordinates corresponding to the first row to be processed (y_px = height - 1)
             initial_real_y = offset_y + (height - 1) * actual_scale
-            gcode.append(f"G0 X{start_x_img:.3f} Y{initial_real_y:.3f}")  # Move to start of first scan row
+            gcode.append(f"G0 X{offset_x:.3f} Y{initial_real_y:.3f}")
 
             # Counters
             line_count = 0
             scan_lines = 0
+            segment_count = 0  # THAY ĐỔI: Thêm bộ đếm segment
 
             # Scan image and create G-code
             zigzag_direction = 1
-            progress_step = 100.0 / height
 
-            # Determine pixel step based on line spacing and scale
-            line_spacing_unit = line_spacing  # Assuming mm
-            pixel_step_y = max(1, int(line_spacing_unit / actual_scale))
+            # THAY ĐỔI: Tính toán line_step giống như trong preview_processing()
+            # để đảm bảo nhất quán
+            line_spacing_cm = line_spacing / 10  # mm to cm
+            line_step = max(1, int(line_spacing_cm / (scale_factor * 0.1)))
 
-            # Iterate pixel rows from top-down (image array index)
-            # G-code Y decreases as image Y pixel index increases
-            for y_px in range(0, height, pixel_step_y):
+            # THAY ĐỔI: Sử dụng line_step thay vì pixel_step_y
+            print(f"DEBUG: Line spacing: {line_spacing}mm, Line step: {line_step} pixels")
+            print(f"DEBUG: Expected scan rows: {height // line_step}")
+
+            # Iterate pixel rows
+            for y_px in range(0, height, line_step):
                 # Calculate actual Y position in machine coordinates
-                # G-code Y = offset_y + (height - 1 - y_px) * actual_scale # If Y increases upwards
-                real_y = offset_y + (height - 1 - y_px) * actual_scale  # Correct Y mapping
+                real_y = offset_y + (height - 1 - y_px) * actual_scale
 
                 # Skip if row is outside workspace
                 if real_y < custom_y_min or real_y > custom_y_max:
                     continue
 
                 scan_lines += 1
+
+                # THAY ĐỔI: Đếm số pixel target trong dòng này để debug
+                if y_px < height:
+                    target_count = np.sum(img_binary[y_px, :] == target_value)
+                    if scan_lines % 10 == 0 or scan_lines <= 3:  # In vài dòng đầu và mỗi 10 dòng
+                        print(f"Row {scan_lines}: {target_count}/{width} target pixels found")
 
                 # Find segments to draw in this row
                 segments = []
@@ -932,20 +882,20 @@ class ImageToGcodeApp:
                 for x_px in x_range:
                     if 0 <= y_px < height and 0 <= x_px < width:
                         if img_binary[y_px, x_px] == target_value:
-                            if start_px == -1: start_px = x_px
+                            if start_px == -1:
+                                start_px = x_px
                         elif start_px != -1:
-                            end_px = x_px - zigzag_direction
-                            segments.append((start_px, end_px) if zigzag_direction == 1 else (end_px, start_px))
+                            end_px = x_px - 1  # THAY ĐỔI: Đơn giản hóa, không cần xét zigzag_direction ở đây
+                            segments.append((start_px, end_px))
                             start_px = -1
-                    elif start_px != -1:
-                        end_px = x_px - zigzag_direction
-                        segments.append((start_px, end_px) if zigzag_direction == 1 else (end_px, start_px))
-                        start_px = -1
-                if start_px != -1:
-                    end_px = x_range[-1]
-                    segments.append((start_px, end_px) if zigzag_direction == 1 else (end_px, start_px))
 
-                # Generate G-code for segments (G0 ONLY, NO COMMENTS)
+                # Xử lý segment cuối cùng nếu có
+                if start_px != -1:
+                    segments.append((start_px, x_range[-1]))
+
+                segment_count += len(segments)  # THAY ĐỔI: Đếm số segment
+
+                # Generate G-code for segments
                 if segments:
                     last_x_pos = None
                     for seg_start_px, seg_end_px in segments:
@@ -954,50 +904,43 @@ class ImageToGcodeApp:
                         real_start_x = max(custom_x_min, min(custom_x_max, real_start_x))
                         real_end_x = max(custom_x_min, min(custom_x_max, real_end_x))
 
-                        if abs(real_end_x - real_start_x) < 0.01: continue
+                        if abs(real_end_x - real_start_x) < 0.01:
+                            continue
 
-                        # Move to segment start (pen up)
-                        # Optimize moves: only send G0 if position changes significantly
-                        # We assume the machine is already at real_y from the previous G0 or segment end
-                        # Only need to move X if it's different from last_x_pos
-                        current_x = real_start_x  # Where we want to start drawing
-                        # Get current X position estimate (tricky without machine feedback, assume it's last_x_pos)
-                        if last_x_pos is None or abs(current_x - last_x_pos) > 0.01:
-                            gcode.append(f"G0 X{current_x:.3f} Y{real_y:.3f}")  # Move to start, ensure Y is correct
+                        # Move to segment start
+                        if last_x_pos is None or abs(real_start_x - last_x_pos) > 0.01:
+                            gcode.append(f"G0 X{real_start_x:.3f} Y{real_y:.3f}")
 
                         # Pen down
                         gcode.append("M3")
                         line_count += 1
-                        # gcode.append("G4 P0.05") # Removed pause
 
-                        # "Draw" the segment using G0
-                        gcode.append(f"G0 X{real_end_x:.3f} Y{real_y:.3f}")  # Move to end with G0
-                        last_x_pos = real_end_x  # Update last X position
+                        # Draw the segment
+                        gcode.append(f"G0 X{real_end_x:.3f} Y{real_y:.3f}")
+                        last_x_pos = real_end_x
 
                         # Pen up
                         gcode.append("M5")
-                        # gcode.append("G4 P0.05") # Removed pause
 
                 # Change direction for next scan if zigzag
                 if use_zigzag:
                     zigzag_direction *= -1
 
-                # Update progress
-                progress = min(100.0, (y_px + 1) * progress_step)  # Progress based on rows scanned
-                self.root.after(0, self.progress_var.set, int(progress))
-
-            # G-code footer (NO COMMENTS)
+            # G-code footer
             center_x = (custom_x_min + custom_x_max) / 2
             safe_y = custom_y_max - (0.1 * workspace_height)
-            safe_y = max(custom_y_min, safe_y)
-            gcode.append(f"G0 X{center_x:.3f} Y{safe_y:.3f}")  # Move to safe end position
-            gcode.append("M5")  # Ensure pen is up
-            gcode.append("M2")  # End of program
+            gcode.append(f"G0 X{center_x:.3f} Y{safe_y:.3f}")
+            gcode.append("M5")
+            gcode.append("M2")
+
+            # THAY ĐỔI: Hiển thị thêm thông tin debug
+            print(f"DEBUG: Total scan rows: {scan_lines}")
+            print(f"DEBUG: Total segments detected: {segment_count}")
+            print(f"DEBUG: Total pen down commands: {line_count}")
 
             # Update results on the main thread
             self.gcode_lines = gcode
-            self.root.after(0, self.update_gcode_display, gcode, line_count,
-                            scan_lines)  # line_count now counts M3 commands
+            self.root.after(0, self.update_gcode_display, gcode, line_count, scan_lines)
 
         except Exception as e:
             import traceback
