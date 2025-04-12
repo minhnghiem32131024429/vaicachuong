@@ -95,8 +95,8 @@ class ScaraRobot:
         L4 = self.robot_params['L4']
 
         # Giới hạn góc
-        THETA1_MIN, THETA1_MAX = -120, 150
-        THETA2_MIN, THETA2_MAX = 10, 300
+        THETA1_MIN, THETA1_MAX = -170, 170
+        THETA2_MIN, THETA2_MAX = 10, 350
 
         # Tính khoảng cách từ điểm vẽ đến các động cơ
         L13_sq = (x3 - x1) ** 2 + (y3 - y1) ** 2
@@ -522,6 +522,15 @@ class ScaraGUI:
                                    rect_width, rect_height,
                                    linewidth=2, edgecolor='g', facecolor='none', alpha=0.7)
         self.ax.add_patch(workspace_rect)
+
+        # Thêm khung làm việc tùy chỉnh (X0 → X-20, Y20 → Y34)
+        custom_workspace = Rectangle((-20, 20),  # Góc dưới bên trái (x, y)
+                                     20, 14,  # Chiều rộng, chiều cao
+                                     linewidth=3, edgecolor='r', facecolor='yellow', alpha=0.3,
+                                     hatch='\\')
+        self.ax.add_patch(custom_workspace)
+        self.ax.text(-10, 27, "Custom Workspace", fontsize=9,
+                     ha='center', color='darkred', weight='bold')
 
         # Động cơ servo
         self.ax.plot(x1, y1, 'bo', markersize=8)
