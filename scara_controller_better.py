@@ -164,7 +164,7 @@ class ScaraRobot:
 class ScaraGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("SCARA Controller - Flipped X")
+        self.root.title("SCARA Controller - X")
         try: self.root.state('zoomed')
         except tk.TclError: self.root.geometry("1200x800")
 
@@ -203,6 +203,69 @@ class ScaraGUI:
 
         self.root.after(100, self.update_animation)
         logging.info("Khởi tạo ScaraGUI hoàn tất.")
+
+    # --- Trong class ScaraGUI ---
+
+    # ... (các hàm khác) ...
+
+    def _interpolate_and_move(self, target_x, target_y):
+        """
+        Di chuyển đến (target_x, target_y) bằng nội suy tuyến tính đơn giản.
+        Trả về True nếu thành công, False nếu lỗi.
+        """
+        if not self.is_connected: return False
+
+        STEP_LENGTH_MM = 2.0  # << CỐ ĐỊNH BƯỚC NỘI SUY (mm)
+
+        try:
+            # Lấy vị trí bắt đầu từ góc hiện tại
+            start_fk = self.robot.forward_kinematics(self.current_angles['theta1'], self.current_angles['theta2'])
+            if start_fk is None: return False  # Lỗi FK
+            start_x, start_y = start_fk
+
+            # Tính khoảng cách và số bước
+            delta_x = target_x - start_x
+            delta_y = target_y - start_y
+            distance = math.sqrt(delta_x ** 2 + delta_y ** 2)
+
+            if distance < 0.1: return True  # Đã ở gần đích
+
+            num_steps = max(2, int(distance / STEP_LENGTH_MM))
+
+            # Vòng lặp Nội suy
+            for i in range(1, num_steps + 1):
+                # Kiểm tra dừng G-code (vẫn cần thiết)
+                if self.stop_gcode_flag: return False
+                while self.pause_gcode_flag and not self.stop_gcode_flag: time.sleep(0.1)
+
+                # Tính điểm trung gian
+                t = i / num_steps
+                intermediate_x = start_x + t * delta_x
+                intermediate_y = start_y + t * delta_y
+
+                # Tính IK
+                ik_result = self.robot.inverse_kinematics(intermediate_x, intermediate_y, self.current_config)
+                if ik_result is None:  # Thử config còn lại nếu lỗi
+                    alt_config = 'elbow_up_up' if self.current_config == 'elbow_down_down' else 'elbow_down_down'
+                    ik_result = self.robot.inverse_kinematics(intermediate_x, intermediate_y, alt_config)
+                    if ik_result is None:
+                        self.log(f"Lỗi Nội Suy: IK thất bại tại bước {i}", tag="ERROR")
+                        return False  # Không thể tiếp tục
+
+                theta1_i, theta2_i, actual_config = ik_result
+                self.current_config = actual_config  # Cập nhật config
+
+                # Gửi lệnh góc nhỏ và chờ
+                command_str = f"{theta1_i:.2f},{theta2_i:.2f}"
+                if not self.send_command(command_str, wait_for_response=True): return False
+                if not self.wait_for_command_completion(): return False
+                # wait_for_command_completion đã cập nhật self.current_angles/position
+
+            return True  # Thành công
+        except Exception as e:
+            self.log(f"Lỗi trong quá trình nội suy: {e}", tag="ERROR")
+            logging.exception("Lỗi _interpolate_and_move:")
+            return False
 
     def _process_command_queue(self):
         while True:
@@ -324,7 +387,7 @@ class ScaraGUI:
         new_x_min_internal = x_center_internal - max_range / 2; new_x_max_internal = x_center_internal + max_range / 2
         new_y_min = y_center_visible - max_range / 2; new_y_max = y_center_visible + max_range / 2
         self.ax.set_xlim(-(new_x_max_internal), -(new_x_min_internal)); self.ax.set_ylim(new_y_min, new_y_max)
-        self.ax.set_xlabel("X (cm) - Flipped Display"); self.ax.set_ylabel("Y (cm)"); self.ax.set_title("SCARA Robot Visualization")
+        self.ax.set_xlabel("X (cm)"); self.ax.set_ylabel("Y (cm)"); self.ax.set_title("SCARA Robot Visualization")
         self.ax.grid(True, linestyle='--', alpha=0.6); self.ax.set_aspect('equal', adjustable='box')
         x1_vis = -self.robot.robot_params['x1']; y1 = self.robot.robot_params['y1']; x5_vis = -self.robot.robot_params['x5']; y5 = self.robot.robot_params['y5']
         self.ax.plot(x1_vis, y1, 'ks', markersize=8, label='Motor 1 (Y)'); self.ax.plot(x5_vis, y5, 'ks', markersize=8, label='Motor 2 (X)')
@@ -465,7 +528,7 @@ class ScaraGUI:
                 self.is_connected = True; self.connect_btn.configure(text="Ngắt kết nối")
                 self.log(f"✓ Kết nối thành công với {port}", tag="SUCCESS"); logging.info(f"Kết nối thành công đến {port}")
                 self.serial.reset_input_buffer(); self.serial.reset_output_buffer()
-                self.root.after(200, self.set_speed); self.root.after(400, self.set_acceleration); self.root.after(700, self.home)
+                self.root.after(200, self.set_speed); self.root.after(400, self.set_acceleration);
             else:
                 self.log(f"❌ Không nhận được READY/OK từ Arduino sau {max_wait}s.", tag="ERROR"); logging.warning("Kết nối thất bại, không nhận READY/OK.")
                 self.disconnect(silent=True); messagebox.showwarning("Kết Nối Thất Bại", "Không nhận được phản hồi hợp lệ từ Arduino.\nKiểm tra firmware, baud rate.")
@@ -886,7 +949,6 @@ class ScaraGUI:
         if not self.gcode_running: return
         self.gcode_paused = not self.gcode_paused; state = "Tiếp tục" if self.gcode_paused else "Tạm dừng"; log = "Đã tạm dừng G-code." if self.gcode_paused else "Tiếp tục G-code."
         self.pause_btn.config(text=state); self.log(log); logging.info(log)
-
     def stop_gcode(self, is_emergency=False):
         if not self.gcode_running: return
         self.stop_gcode_flag = True; self.gcode_paused = False; self.gcode_running = False
